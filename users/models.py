@@ -42,6 +42,7 @@ class User(AbstractUser):
     image_url = models.URLField(blank=True, null=True)
     firebase_uid = models.CharField(max_length=128, unique=True, blank=True, null=True)
     isIdentityVerified = models.BooleanField(default=False)
+    verifiedAt = models.DateTimeField(blank=True, null=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []

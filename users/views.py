@@ -4,11 +4,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from .models import PayoutAccount
 from .serializers import (
     UserSerializer, UserProfileUpdateSerializer, 
     UserProfilePictureSerializer, PayoutAccountSerializer, 
-    BankVerificationSerializer
+    BankVerificationSerializer, IdentityVerificationInputSerializer,
+    IdentityStatusSerializer
 )
 
 class AuthView(ListAPIView):
@@ -143,3 +145,40 @@ class VerifyBankAccountView(GenericAPIView):
             "status": "error",
             "message": "Could not resolve account name"
         }, status=status.HTTP_400_BAD_REQUEST)
+
+class IdentityVerificationView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = IdentityVerificationInputSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            # Update user verification status
+            user = request.user
+            # TODO: Add actual verification logic here
+            user.isIdentityVerified = True
+            user.verifiedAt = timezone.now()
+            user.save()
+            
+            return Response({
+                "status": "success",
+                "message": "Identity verified successfully",
+                "verified": True
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            "status": "error",
+            "message": "Invalid NIN/BVN number"
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+class IdentityStatusView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = IdentityStatusSerializer
+
+    def get(self, request):
+        user = request.user
+        return Response({
+            "status": "success",
+            "isIdentityVerified": user.isIdentityVerified,
+            "verifiedAt": user.verifiedAt
+        }, status=status.HTTP_200_OK)

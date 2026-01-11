@@ -44,3 +44,12 @@ class PayoutAccountSerializer(serializers.ModelSerializer):
 class BankVerificationSerializer(serializers.Serializer):
     bankCode = serializers.CharField()
     accountNumber = serializers.CharField()
+
+class IdentityVerificationInputSerializer(serializers.Serializer):
+    type = serializers.ChoiceField(choices=['nin', 'bvn'])
+    number = serializers.CharField(min_length=11, max_length=11)
+
+class IdentityStatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['isIdentityVerified', 'verifiedAt']
