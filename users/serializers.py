@@ -7,8 +7,8 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'image_url', 'firebase_uid']
-        read_only_fields = ['email', 'firebase_uid']
+        fields = ['id', 'email', 'first_name', 'last_name', 'image_url', 'firebase_uid', 'isIdentityVerified']
+        read_only_fields = ['email', 'firebase_uid', 'isIdentityVerified']
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False)
