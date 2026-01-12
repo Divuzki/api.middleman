@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials
 import requests
+import dj_database_url
 
 # Load environment variables
 load_dotenv()
@@ -31,9 +32,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-^n$tzx$-iumpm+q#5ajp(t1%$*y%*^8o98+5dfdk_^9-syq7h&'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "False") == "True"
+USE_R2 = os.getenv("USE_R2", "False") == "True"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -52,10 +54,12 @@ INSTALLED_APPS = [
 
     # Local
     'users',
+    'wallet',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -92,8 +96,25 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+    },
+    'wallet_db': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'wallet.sqlite3',
     }
 }
+
+DATABASE_URL = os.getenv('DATABASE_URL')
+WALLET_DATABASE_URL = os.getenv('WALLET_DATABASE_URL')
+
+db_from_env = dj_database_url.config(conn_max_age=600, default=DATABASE_URL)
+DATABASES['default'].update(db_from_env)
+
+wallet_db_from_env = dj_database_url.config(conn_max_age=600, default=WALLET_DATABASE_URL)
+DATABASES['wallet_db'].update(wallet_db_from_env)
+
+
+
+DATABASE_ROUTERS = ['middleman_api.db_routers.WalletRouter']
 
 
 # Password validation
@@ -126,11 +147,40 @@ USE_I18N = True
 
 USE_TZ = True
 
+if USE_R2:
+    R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
+    R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
+    R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
+    R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
+    R2_REGION = os.getenv("R2_REGION", "auto")
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.0/howto/static-files/
+    # Cloudflare R2 S3-compatible endpoint
+    AWS_S3_ENDPOINT_URL = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    
+    AWS_S3_REGION_NAME = R2_REGION
+    AWS_STORAGE_BUCKET_NAME = R2_BUCKET_NAME
+    AWS_ACCESS_KEY_ID = R2_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY = R2_SECRET_ACCESS_KEY
+    AWS_DEFAULT_ACL = None
 
-STATIC_URL = 'static/'
+    AWS_S3_CUSTOM_DOMAIN = "cdn.midman.app"
+
+    # Use R2 storage backends
+    STATICFILES_STORAGE = "middleman_api.storage_backends.R2StaticStorage"
+    STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/static/"
+
+    DEFAULT_FILE_STORAGE = "middleman_api.storage_backends.R2MediaStorage"
+    MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
+
+else:
+    STATIC_URL = "/static/"
+    MEDIA_URL = "/media/"
+    STATIC_ROOT = BASE_DIR / "static-root"
+    MEDIA_ROOT = BASE_DIR / "media-root"
+
+    STATICFILES_DIRS = [
+        BASE_DIR / "static",
+    ]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/6.0/ref/settings/#default-auto-field
@@ -185,3 +235,10 @@ else:
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True # For development
+
+EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
+ANYMAIL = {
+    "RESEND_API_KEY": os.environ.get("RESEND_API_KEY"),
+}
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@midman.app")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "main@midman.app")
