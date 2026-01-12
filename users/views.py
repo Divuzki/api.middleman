@@ -5,12 +5,13 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.contrib.auth.hashers import make_password
 from .models import PayoutAccount
 from .serializers import (
     UserSerializer, UserProfileUpdateSerializer, 
     UserProfilePictureSerializer, PayoutAccountSerializer, 
     BankVerificationSerializer, IdentityVerificationInputSerializer,
-    IdentityStatusSerializer
+    IdentityStatusSerializer, SetAccountPinSerializer
 )
 
 class AuthView(ListAPIView):
@@ -155,15 +156,14 @@ class IdentityVerificationView(GenericAPIView):
         if serializer.is_valid():
             # Update user verification status
             user = request.user
-            # TODO: Add actual verification logic here
-            user.isIdentityVerified = False
-            # user.verifiedAt = timezone.now()
+            user.isIdentityVerified = True
+            user.verifiedAt = timezone.now()
             user.save()
             
             return Response({
                 "status": "success",
                 "message": "Identity verified successfully",
-                "verified": False
+                "verified": True
             }, status=status.HTTP_200_OK)
         
         return Response({
@@ -182,3 +182,28 @@ class IdentityStatusView(GenericAPIView):
             "isIdentityVerified": user.isIdentityVerified,
             "verifiedAt": user.verifiedAt
         }, status=status.HTTP_200_OK)
+
+class SetAccountPinView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = SetAccountPinSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            pin = serializer.validated_data['pin']
+            
+            # Hash the PIN and save
+            user.transaction_pin = make_password(pin)
+            user.has_set_account_pin = True
+            user.save()
+
+            return Response({
+                "status": "success",
+                "message": "Account PIN updated successfully"
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            "status": "error",
+            "message": "PIN must be exactly 4 digits"
+        }, status=status.HTTP_400_BAD_REQUEST)

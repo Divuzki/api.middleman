@@ -7,8 +7,8 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'image_url', 'firebase_uid', 'isIdentityVerified']
-        read_only_fields = ['email', 'firebase_uid', 'isIdentityVerified']
+        fields = ['id', 'email', 'first_name', 'last_name', 'image_url', 'firebase_uid', 'isIdentityVerified', 'has_set_account_pin']
+        read_only_fields = ['email', 'firebase_uid', 'isIdentityVerified', 'has_set_account_pin', 'passowrd']
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False)
@@ -53,3 +53,11 @@ class IdentityStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['isIdentityVerified', 'verifiedAt']
+
+class SetAccountPinSerializer(serializers.Serializer):
+    pin = serializers.CharField(min_length=4, max_length=4)
+
+    def validate_pin(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("PIN must contain only digits.")
+        return value

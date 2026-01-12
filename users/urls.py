@@ -2,7 +2,8 @@ from django.urls import path
 from .views import (
     AuthView, UserProfileUpdateView, UserProfilePictureUpdateView,
     BankListView, PayoutAccountListCreateView, PayoutAccountDeleteView,
-    VerifyBankAccountView, IdentityVerificationView, IdentityStatusView
+    VerifyBankAccountView, IdentityVerificationView, IdentityStatusView,
+    SetAccountPinView
 )
 
 urlpatterns = [
@@ -15,4 +16,5 @@ urlpatterns = [
     path('user/payout-accounts/<int:id>', PayoutAccountDeleteView.as_view(), name='delete-payout-account'),
     path('user/verify-identity', IdentityVerificationView.as_view(), name='verify-identity'),
     path('user/identity-status', IdentityStatusView.as_view(), name='identity-status'),
+    path('user/pin', SetAccountPinView.as_view(), name='set-account-pin'),
 ]

@@ -45,6 +45,7 @@ class User(AbstractUser):
     verifiedAt = models.DateTimeField(blank=True, null=True)
 
     has_set_account_pin = models.BooleanField(default=False)
+    transaction_pin = models.CharField(max_length=128, blank=True, null=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
