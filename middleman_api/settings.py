@@ -106,13 +106,21 @@ DATABASES = {
 DATABASE_URL = os.getenv('DATABASE_URL')
 WALLET_DATABASE_URL = os.getenv('WALLET_DATABASE_URL')
 
-db_from_env = dj_database_url.config(conn_max_age=600, default=DATABASE_URL)
-DATABASES['default'].update(db_from_env)
+# Override with environment variables if present (Production)
+if DATABASE_URL:
+    DATABASES['default'] = dj_database_url.config(
+        default=DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 
-wallet_db_from_env = dj_database_url.config(env='WALLET_DATABASE_URL', conn_max_age=600, default=WALLET_DATABASE_URL)
-DATABASES['wallet_db'].update(wallet_db_from_env)
-
-
+if WALLET_DATABASE_URL:
+    DATABASES['wallet_db'] = dj_database_url.config(
+        env='WALLET_DATABASE_URL',
+        default=WALLET_DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 
 DATABASE_ROUTERS = ['middleman_api.db_routers.WalletRouter']
 

@@ -39,6 +39,12 @@ class WalletRouter:
         Make sure the wallet app only appears in the 'wallet_db'
         database.
         """
+        # print(f"DEBUG: allow_migrate db={db} app={app_label}")
         if app_label in self.route_app_labels:
             return db == 'wallet_db'
+        
+        # Prevent other apps from migrating to wallet_db
+        if db == 'wallet_db':
+            return False
+            
         return None
