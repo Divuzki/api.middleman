@@ -166,6 +166,15 @@ if USE_R2:
     AWS_S3_CUSTOM_DOMAIN = "cdn.midman.app"
 
     # Use R2 storage backends
+    STORAGES = {
+        "default": {
+            "BACKEND": "middleman_api.storage_backends.R2MediaStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "middleman_api.storage_backends.R2StaticStorage",
+        },
+    }
+    
     STATICFILES_STORAGE = "middleman_api.storage_backends.R2StaticStorage"
     STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/static/"
 
@@ -173,6 +182,15 @@ if USE_R2:
     MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
 
 else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+
     STATIC_URL = "/static/"
     MEDIA_URL = "/media/"
     STATIC_ROOT = BASE_DIR / "static-root"
