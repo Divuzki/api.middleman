@@ -109,7 +109,7 @@ WALLET_DATABASE_URL = os.getenv('WALLET_DATABASE_URL')
 db_from_env = dj_database_url.config(conn_max_age=600, default=DATABASE_URL)
 DATABASES['default'].update(db_from_env)
 
-wallet_db_from_env = dj_database_url.config(conn_max_age=600, default=WALLET_DATABASE_URL)
+wallet_db_from_env = dj_database_url.config(env='WALLET_DATABASE_URL', conn_max_age=600, default=WALLET_DATABASE_URL)
 DATABASES['wallet_db'].update(wallet_db_from_env)
 
 
