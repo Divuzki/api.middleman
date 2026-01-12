@@ -156,14 +156,14 @@ class IdentityVerificationView(GenericAPIView):
             # Update user verification status
             user = request.user
             # TODO: Add actual verification logic here
-            user.isIdentityVerified = True
-            user.verifiedAt = timezone.now()
+            user.isIdentityVerified = False
+            # user.verifiedAt = timezone.now()
             user.save()
             
             return Response({
                 "status": "success",
                 "message": "Identity verified successfully",
-                "verified": True
+                "verified": False
             }, status=status.HTTP_200_OK)
         
         return Response({

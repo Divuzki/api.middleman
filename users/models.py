@@ -44,6 +44,8 @@ class User(AbstractUser):
     isIdentityVerified = models.BooleanField(default=False)
     verifiedAt = models.DateTimeField(blank=True, null=True)
 
+    has_set_account_pin = models.BooleanField(default=False)
+
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
 
