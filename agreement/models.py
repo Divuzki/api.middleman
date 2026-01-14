@@ -38,11 +38,11 @@ class Agreement(models.Model):
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='draft')
     timeline = models.CharField(max_length=100, null=True, blank=True)
     
-    initiator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='initiated_agreements')
-    counterparty = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='participated_agreements')
+    initiator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='initiated_agreements', db_constraint=False)
+    counterparty = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='participated_agreements', db_constraint=False)
     
-    buyer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='buying_agreements')
-    seller = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='selling_agreements')
+    buyer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='buying_agreements', db_constraint=False)
+    seller = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='selling_agreements', db_constraint=False)
     
     creator_role = models.CharField(max_length=10, choices=[('buyer', 'Buyer'), ('seller', 'Seller')])
     
@@ -94,7 +94,7 @@ class ChatMessage(models.Model):
 
     id = models.CharField(max_length=50, primary_key=True, default=generate_message_id)
     agreement = models.ForeignKey(Agreement, on_delete=models.CASCADE, related_name='messages')
-    sender = models.ForeignKey(User, on_delete=models.CASCADE)
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, db_constraint=False)
     text = models.TextField(null=True, blank=True)
     message_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='text')
     offer = models.ForeignKey(AgreementOffer, on_delete=models.SET_NULL, null=True, blank=True)
