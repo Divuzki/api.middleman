@@ -41,6 +41,7 @@ ALLOWED_HOSTS = ["*"]
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -51,11 +52,13 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'corsheaders',
+    'channels',
 
     # Local
     'users',
     'wallet',
     'wager',
+    'agreement',
 ]
 
 MIDDLEWARE = [
@@ -88,6 +91,13 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'middleman_api.wsgi.application'
+ASGI_APPLICATION = 'middleman_api.asgi.application'
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
 
 
 # Database
@@ -105,12 +115,17 @@ DATABASES = {
     'wager_db': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'wager.sqlite3',
+    },
+    'agreement_db': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'agreement.sqlite3',
     }
 }
 
 DATABASE_URL = os.getenv('DATABASE_URL')
 WALLET_DATABASE_URL = os.getenv('WALLET_DATABASE_URL')
 WAGER_DATABASE_URL = os.getenv('WAGER_DATABASE_URL')
+AGREEMENT_DATABASE_URL = os.getenv('AGREEMENT_DATABASE_URL')
 
 # Override with environment variables if present (Production)
 if DATABASE_URL:
@@ -136,7 +151,20 @@ if WAGER_DATABASE_URL:
         conn_health_checks=True,
     )
 
-DATABASE_ROUTERS = ['middleman_api.db_routers.WalletRouter', 'middleman_api.db_routers.WagerRouter']
+if AGREEMENT_DATABASE_URL:
+    DATABASES['agreement_db'] = dj_database_url.config(
+        env='AGREEMENT_DATABASE_URL',
+        default=AGREEMENT_DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
+
+DATABASE_ROUTERS = [
+    'middleman_api.db_routers.AuthRouter',
+    'middleman_api.db_routers.WalletRouter',
+    'middleman_api.db_routers.WagerRouter',
+    'middleman_api.db_routers.AgreementRouter'
+]
 
 
 # Password validation

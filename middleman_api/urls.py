@@ -6,4 +6,5 @@ urlpatterns = [
     path('', include('users.urls')),
     path('', include('wallet.urls')),
     path('', include('wager.urls')),
+    path('', include('agreement.urls')),
 ]
