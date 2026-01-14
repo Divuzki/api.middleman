@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     # Local
     'users',
     'wallet',
+    'wager',
 ]
 
 MIDDLEWARE = [
@@ -100,11 +101,16 @@ DATABASES = {
     'wallet_db': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'wallet.sqlite3',
+    },
+    'wager_db': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'wager.sqlite3',
     }
 }
 
 DATABASE_URL = os.getenv('DATABASE_URL')
 WALLET_DATABASE_URL = os.getenv('WALLET_DATABASE_URL')
+WAGER_DATABASE_URL = os.getenv('WAGER_DATABASE_URL')
 
 # Override with environment variables if present (Production)
 if DATABASE_URL:
@@ -122,7 +128,15 @@ if WALLET_DATABASE_URL:
         conn_health_checks=True,
     )
 
-DATABASE_ROUTERS = ['middleman_api.db_routers.WalletRouter']
+if WAGER_DATABASE_URL:
+    DATABASES['wager_db'] = dj_database_url.config(
+        env='WAGER_DATABASE_URL',
+        default=WAGER_DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
+
+DATABASE_ROUTERS = ['middleman_api.db_routers.WalletRouter', 'middleman_api.db_routers.WagerRouter']
 
 
 # Password validation
