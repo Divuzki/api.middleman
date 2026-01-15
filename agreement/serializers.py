@@ -47,6 +47,7 @@ class AgreementSerializer(serializers.ModelSerializer):
     completedAt = serializers.DateTimeField(source='completed_at', read_only=True)
     date = serializers.DateTimeField(source='created_at', read_only=True)
     deliveryProof = serializers.JSONField(source='delivery_proof', read_only=True)
+    initialOffer = serializers.SerializerMethodField()
 
     class Meta:
         model = Agreement
@@ -54,9 +55,24 @@ class AgreementSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'amount', 'currency', 'status', 
             'timeline', 'initiator', 'counterparty', 'buyerId', 'sellerId', 
             'creatorRole', 'terms', 'shareLink', 'date', 
-            'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt', 'deliveryProof'
+            'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt', 'deliveryProof',
+            'initialOffer'
         ]
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
+
+    def get_initialOffer(self, obj):
+        # Return the first offer if it exists (usually created by seller on init)
+        # We need to filter offers related to this agreement.
+        # When creating, the relation might be cached as empty on the 'obj' instance if it was fetched before offers were added.
+        # To be safe, we can query the DB directly if we have an ID, or use the manager.
+        if obj.pk:
+            first_offer = AgreementOffer.objects.filter(agreement=obj).order_by('created_at').first()
+            if first_offer:
+                return {
+                    "amount": float(first_offer.amount),
+                    "timeline": first_offer.timeline
+                }
+        return None
 
     def create(self, validated_data):
         user = self.context['request'].user

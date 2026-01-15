@@ -24,6 +24,7 @@ class Agreement(models.Model):
         ('draft', 'Draft'),
         ('awaiting_acceptance', 'Awaiting Acceptance'),
         ('terms_locked', 'Terms Locked'),
+        ('active', 'Active'),
         ('secured', 'Secured'),
         ('delivered', 'Delivered'),
         ('completed', 'Completed'),

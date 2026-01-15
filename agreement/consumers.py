@@ -42,33 +42,43 @@ class AgreementConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         data = json.loads(text_data)
         message_type = data.get('type')
-        message_data = data.get('data')
 
-        if message_type == 'send_message':
-            await self.handle_send_message(message_data)
-        elif message_type == 'make_offer':
-            await self.handle_make_offer(message_data)
+        if message_type == 'chat_message':
+            await self.handle_chat_message(data)
+        elif message_type == 'offer_created':
+            await self.handle_offer_created(data)
 
-    async def handle_send_message(self, data):
-        text = data.get('text')
-        if not text:
+    async def handle_chat_message(self, data):
+        message_text = data.get('message')
+        if not message_text:
             return
 
-        message = await self.save_message(self.user, self.agreement_id, text)
+        message = await self.save_message(self.user, self.agreement_id, message_text)
         serialized_message = await self.serialize_message(message)
+
+        # Construct flat JSON response
+        response_data = {
+            'type': 'chat_message',
+            'id': serialized_message['id'],
+            'text': serialized_message['text'],
+            'senderId': serialized_message['senderId'],
+            'senderName': serialized_message['senderName'],
+            'timestamp': serialized_message['timestamp']
+        }
 
         await self.channel_layer.group_send(
             self.room_group_name,
             {
                 'type': 'chat_message',
-                'data': serialized_message
+                'data': response_data
             }
         )
 
-    async def handle_make_offer(self, data):
-        amount = data.get('amount')
-        description = data.get('description')
-        timeline = data.get('timeline')
+    async def handle_offer_created(self, data):
+        offer_data = data.get('offer', {})
+        amount = offer_data.get('amount')
+        description = offer_data.get('description')
+        timeline = offer_data.get('timeline')
         
         if not all([amount, description, timeline]):
             return
@@ -76,32 +86,45 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         message = await self.save_offer(self.user, self.agreement_id, amount, description, timeline)
         serialized_message = await self.serialize_message(message)
         
+        # Construct response with offer object
+        response_data = {
+            'type': 'chat_message',
+            'id': serialized_message['id'],
+            'offer': serialized_message['offer'],
+            'senderId': serialized_message['senderId'],
+            'senderName': serialized_message['senderName'],
+            'timestamp': serialized_message['timestamp']
+        }
+        
         await self.channel_layer.group_send(
             self.room_group_name,
             {
                 'type': 'offer_created',
-                'data': serialized_message
+                'data': response_data
             }
         )
 
     # Event handlers
     async def chat_message(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'chat_message',
-            'data': event['data']
-        }))
+        await self.send(text_data=json.dumps(event['data']))
 
     async def offer_created(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'offer_created',
-            'data': event['data']
-        }))
+        await self.send(text_data=json.dumps(event['data']))
 
     async def agreement_updated(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'agreement_updated',
-            'data': event['data']
-        }))
+        # Flatten agreement update if it comes nested
+        data = event['data']
+        # If the data itself has 'type' inside, use it, otherwise wrap it
+        if 'type' not in data:
+            data['type'] = 'agreement_updated'
+        
+        await self.send(text_data=json.dumps(data))
+
+    async def offer_updated(self, event):
+        data = event['data']
+        if 'type' not in data:
+            data['type'] = 'offer_updated'
+        await self.send(text_data=json.dumps(data))
 
     # DB Helpers
     @database_sync_to_async
@@ -125,9 +148,6 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     user.save()
                 return user
             except User.DoesNotExist:
-                # We generally expect the user to exist if they are connecting, 
-                # but we can create one if needed (like in authentication.py)
-                # For safety, let's assume they should exist or return None
                 return None
         except Exception as e:
             logger.error(f"WebSocket Auth Error: {e}")
@@ -183,22 +203,8 @@ class UserConsumer(AsyncWebsocketConsumer):
 
         self.user_id = self.scope['url_route']['kwargs']['user_id']
         
-        # Ensure user connects to their own channel (optional security check)
-        # Using firebase_uid or internal id? The URL param says user_id. 
-        # Ideally we check if self.user.id (or firebase_uid) matches.
-        # Let's assume user_id in URL is the one we want to subscribe to.
-        # But for security, we should check if self.user.id matches user_id or self.user.firebase_uid matches.
-        
-        # Assuming user_id in URL is the internal ID or firebase_uid?
-        # If internal ID (integer), we need to cast.
-        # If firebase_uid, it's string.
-        # Let's assume checking against self.user.id or self.user.firebase_uid.
-        
-        # For simplicity, let's allow connection if authenticated, but only subscribe to self.user's channel.
-        # Actually, the requirement says "Connect to receive updates... URL: /ws/user/:user_id/".
-        # We'll use the authenticated user's ID to form the group name to ensure privacy.
-        
-        self.room_group_name = f'user_{self.user.id}' # Use internal ID for group name consistency
+        # Ensure we use consistent group naming
+        self.room_group_name = f'user_{self.user.id}' 
         
         await self.channel_layer.group_add(
             self.room_group_name,
@@ -215,6 +221,7 @@ class UserConsumer(AsyncWebsocketConsumer):
             )
 
     async def agreement_updated(self, event):
+        # User notifications follow a nested structure as per spec
         await self.send(text_data=json.dumps({
             'type': 'agreement_updated',
             'data': event['data']
@@ -222,7 +229,6 @@ class UserConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_user_from_token(self):
-        # Same auth logic
         query_string = self.scope['query_string'].decode()
         params = dict(x.split('=') for x in query_string.split('&') if '=' in x)
         token = params.get('token')

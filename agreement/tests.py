@@ -2,7 +2,12 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
-from .models import Agreement
+from .models import Agreement, AgreementOffer
+from channels.testing import WebsocketCommunicator
+from channels.db import database_sync_to_async
+from middleman_api.asgi import application
+from .consumers import AgreementConsumer
+from unittest.mock import patch
 
 User = get_user_model()
 
@@ -57,11 +62,13 @@ class AgreementTests(TestCase):
         self.assertEqual(agreement.buyer, self.user)
         self.assertIsNone(agreement.seller)
 
-    def test_create_agreement_seller(self):
+    def test_create_agreement_seller_with_offer(self):
         data = {
             'title': 'Seller Agreement',
             'description': 'Selling item',
-            'creatorRole': 'seller'
+            'creatorRole': 'seller',
+            'amount': 50000,
+            'timeline': '3 days'
         }
         
         response = self.client.post('/agreements/', data, format='json')
@@ -71,8 +78,158 @@ class AgreementTests(TestCase):
         
         self.assertEqual(response_data['creatorRole'], 'seller')
         self.assertEqual(response_data['sellerId'], self.user.firebase_uid)
-        self.assertIsNone(response_data.get('buyerId')) # Should be None or not present if null
+        self.assertIsNone(response_data.get('buyerId'))
+        
+        # Check initial offer
+        self.assertIsNotNone(response_data.get('initialOffer'))
+        self.assertEqual(response_data['initialOffer']['amount'], 50000)
+        self.assertEqual(response_data['initialOffer']['timeline'], '3 days')
         
         agreement = Agreement.objects.get(id=response_data['id'])
-        self.assertEqual(agreement.seller, self.user)
-        self.assertIsNone(agreement.buyer)
+        self.assertEqual(agreement.offers.count(), 1)
+        self.assertEqual(agreement.messages.count(), 1)
+
+    def test_accept_offer_seller(self):
+        # Create agreement and offer as buyer
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, buyer=self.user,
+            creator_role='buyer'
+        )
+        offer = AgreementOffer.objects.create(
+            agreement=agreement, amount=100, description="Offer", timeline="1d", status='pending'
+        )
+        
+        # Another user as seller
+        seller = User.objects.create_user(email='seller@test.com', password='pw', firebase_uid='uid_sell')
+        agreement.seller = seller
+        agreement.save()
+        
+        self.client.force_authenticate(user=seller)
+        
+        response = self.client.post(f'/agreements/{agreement.id}/accept-offer/', {
+            'offerId': offer.id
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        offer.refresh_from_db()
+        self.assertEqual(offer.status, 'accepted_by_seller')
+
+    def test_accept_offer_buyer(self):
+        # Create agreement and offer as seller
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, seller=self.user,
+            creator_role='seller'
+        )
+        offer = AgreementOffer.objects.create(
+            agreement=agreement, amount=100, description="Offer", timeline="1d", status='accepted_by_seller'
+        )
+        
+        # Another user as buyer
+        buyer = User.objects.create_user(email='buyer@test.com', password='pw', firebase_uid='uid_buy')
+        agreement.buyer = buyer
+        agreement.save()
+        
+        self.client.force_authenticate(user=buyer)
+        
+        # Try without PIN
+        response = self.client.post(f'/agreements/{agreement.id}/accept-offer/', {
+            'offerId': offer.id
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+        # With PIN
+        response = self.client.post(f'/agreements/{agreement.id}/accept-offer/', {
+            'offerId': offer.id,
+            'pin': '1234'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        agreement.refresh_from_db()
+        offer.refresh_from_db()
+        
+        self.assertEqual(agreement.status, 'active')
+        self.assertIsNotNone(agreement.secured_at)
+        self.assertEqual(offer.status, 'accepted')
+
+    def test_complete_agreement(self):
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, seller=self.user, buyer=self.user,
+            status='active', creator_role='seller'
+        )
+        
+        response = self.client.post(f'/agreements/{agreement.id}/complete/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        agreement.refresh_from_db()
+        self.assertEqual(agreement.status, 'completed')
+        self.assertIsNotNone(agreement.completed_at)
+
+class WebSocketTests(TestCase):
+    databases = {'default', 'agreement_db'}
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='ws_test@example.com', 
+            password='password123',
+            first_name='WS',
+            last_name='User',
+            firebase_uid='ws_uid_123'
+        )
+        self.agreement = Agreement.objects.create(
+            title='WS Agreement',
+            description='WS Description',
+            initiator=self.user,
+            creator_role='buyer',
+            buyer=self.user
+        )
+
+    @patch('agreement.consumers.auth.verify_id_token')
+    async def test_agreement_chat_flow(self, mock_verify_token):
+        # Mock Firebase Auth
+        mock_verify_token.return_value = {
+            'uid': 'ws_uid_123',
+            'email': 'ws_test@example.com'
+        }
+
+        communicator = WebsocketCommunicator(
+            application, 
+            f"/ws/agreements/{self.agreement.id}/?token=valid_token"
+        )
+        
+        connected, subprotocol = await communicator.connect()
+        self.assertTrue(connected)
+
+        # Test sending a message
+        await communicator.send_json_to({
+            "type": "chat_message",
+            "message": "Hello WebSocket"
+        })
+
+        # Receive broadcast
+        response = await communicator.receive_json_from()
+        self.assertEqual(response['type'], 'chat_message')
+        self.assertEqual(response['text'], 'Hello WebSocket')
+        self.assertEqual(response['senderId'], 'ws_uid_123')
+        
+        # Test making an offer
+        await communicator.send_json_to({
+            "type": "offer_created",
+            "offer": {
+                "amount": 1000,
+                "description": "Offer Description",
+                "timeline": "2 days"
+            }
+        })
+
+        response = await communicator.receive_json_from()
+        self.assertEqual(response['type'], 'chat_message')
+        self.assertIn('offer', response)
+        self.assertEqual(response['offer']['amount'], '1000.00')
+        self.assertEqual(response['offer']['description'], 'Offer Description')
+        self.assertEqual(response['senderId'], 'ws_uid_123')
+
+        await communicator.disconnect()
