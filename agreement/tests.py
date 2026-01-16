@@ -3,6 +3,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from .models import Agreement, AgreementOffer
+from wallet.models import Wallet, Transaction
 from channels.testing import WebsocketCommunicator
 from channels.db import database_sync_to_async
 from middleman_api.asgi import application
@@ -12,7 +13,7 @@ from unittest.mock import patch
 User = get_user_model()
 
 class AgreementTests(TestCase):
-    databases = {'default', 'agreement_db'}
+    databases = {'default', 'agreement_db', 'wallet_db'}
 
     def setUp(self):
         self.client = APIClient()
@@ -21,9 +22,13 @@ class AgreementTests(TestCase):
             password='password123',
             first_name='Test',
             last_name='User',
-            firebase_uid='uid_123'
+            firebase_uid='uid_123',
+            transaction_pin='1234'
         )
         self.client.force_authenticate(user=self.user)
+        
+        # Create wallet for user
+        self.wallet = Wallet.objects.create(user_id=self.user.id, balance=10000.00)
 
     def test_create_agreement(self):
         data = {
@@ -127,9 +132,12 @@ class AgreementTests(TestCase):
         )
         
         # Another user as buyer
-        buyer = User.objects.create_user(email='buyer@test.com', password='pw', firebase_uid='uid_buy')
+        buyer = User.objects.create_user(email='buyer@test.com', password='pw', firebase_uid='uid_buy', transaction_pin='1234')
         agreement.buyer = buyer
         agreement.save()
+        
+        # Create wallet for buyer
+        buyer_wallet = Wallet.objects.create(user_id=buyer.id, balance=500.00)
         
         self.client.force_authenticate(user=buyer)
         
@@ -149,10 +157,15 @@ class AgreementTests(TestCase):
         
         agreement.refresh_from_db()
         offer.refresh_from_db()
+        buyer_wallet.refresh_from_db()
         
         self.assertEqual(agreement.status, 'active')
         self.assertIsNotNone(agreement.secured_at)
         self.assertEqual(offer.status, 'accepted')
+        
+        # Verify wallet debit
+        self.assertEqual(float(buyer_wallet.balance), 400.00) # 500 - 100
+        self.assertTrue(Transaction.objects.filter(wallet=buyer_wallet, amount=100, transaction_type='TRANSFER').exists())
 
     def test_complete_agreement(self):
         agreement = Agreement.objects.create(
@@ -172,20 +185,32 @@ class AgreementTests(TestCase):
         agreement = Agreement.objects.create(
             title="Test", description="Desc",
             initiator=self.user, seller=self.user, buyer=self.user,
-            status='delivered', creator_role='seller'
+            status='delivered', creator_role='seller', amount=100.00
         )
         
         # User is initiator/buyer in setup? No, setup user is generic.
         # Let's ensure self.user is the buyer
         agreement.buyer = self.user
+        
+        # Create seller and wallet
+        seller = User.objects.create_user(email='seller2@test.com', password='pw', firebase_uid='uid_sell2')
+        agreement.seller = seller
         agreement.save()
+        
+        seller_wallet = Wallet.objects.create(user_id=seller.id, balance=0.00)
         
         response = self.client.post(f'/agreements/{agreement.id}/confirm/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         agreement.refresh_from_db()
+        seller_wallet.refresh_from_db()
+        
         self.assertEqual(agreement.status, 'completed')
         self.assertIsNotNone(agreement.completed_at)
+        
+        # Verify seller credit
+        self.assertEqual(float(seller_wallet.balance), 100.00)
+        self.assertTrue(Transaction.objects.filter(wallet=seller_wallet, amount=100, transaction_type='TRANSFER').exists())
 
     def test_reject_offer(self):
         agreement = Agreement.objects.create(

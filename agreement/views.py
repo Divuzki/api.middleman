@@ -8,6 +8,7 @@ from .models import Agreement, AgreementOffer, ChatMessage
 from .serializers import AgreementSerializer, ChatMessageSerializer, AgreementOfferSerializer
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from wallet.models import Wallet, Transaction
 import uuid
 
 class AgreementViewSet(viewsets.ModelViewSet):
@@ -118,9 +119,35 @@ class AgreementViewSet(viewsets.ModelViewSet):
             # Verify PIN
             if user.transaction_pin and user.transaction_pin != pin:
                  return Response({"error": "Incorrect PIN"}, status=status.HTTP_400_BAD_REQUEST)
-            # If user hasn't set a PIN but sends one, we might assume it's setting it or verify against some default? 
-            # For now, let's strictly require it if set, or just allow if not set (which shouldn't happen in prod).
-            # Mock funding deduction here...
+            
+            # Escrow Logic: Lock Funds
+            try:
+                # Get Buyer's Wallet
+                buyer_wallet = Wallet.objects.get(user_id=user.id)
+                
+                if buyer_wallet.balance < offer.amount:
+                    return Response({"error": "Insufficient funds in wallet"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Debit Wallet
+                buyer_wallet.balance -= offer.amount
+                buyer_wallet.save()
+                
+                # Create Transaction Record
+                Transaction.objects.create(
+                    wallet=buyer_wallet,
+                    title=f"Escrow Lock: {agreement.title}",
+                    amount=offer.amount,
+                    transaction_type='TRANSFER',
+                    category='Escrow Lock',
+                    status='SUCCESSFUL',
+                    reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
+                    description=f"Funds locked for agreement {agreement.id}"
+                )
+                
+            except Wallet.DoesNotExist:
+                return Response({"error": "Buyer wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
             agreement.amount = offer.amount
             agreement.timeline = offer.timeline
@@ -365,8 +392,32 @@ class AgreementViewSet(viewsets.ModelViewSet):
         if agreement.status != 'delivered':
              return Response({"error": "Agreement must be delivered to confirm"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Mock release funds to Seller wallet
-        # ... logic to transfer funds ...
+        # Escrow Logic: Release Funds to Seller
+        try:
+            seller_wallet = Wallet.objects.get(user_id=agreement.seller.id)
+            
+            # Credit Wallet
+            seller_wallet.balance += agreement.amount
+            seller_wallet.save()
+            
+            # Create Transaction Record
+            Transaction.objects.create(
+                wallet=seller_wallet,
+                title=f"Escrow Release: {agreement.title}",
+                amount=agreement.amount,
+                transaction_type='TRANSFER',
+                category='Escrow Release',
+                status='SUCCESSFUL',
+                reference=f"escrow_release_{agreement.id}_{uuid.uuid4().hex[:8]}",
+                description=f"Funds released for agreement {agreement.id}"
+            )
+            
+        except Wallet.DoesNotExist:
+            # This is critical - seller needs a wallet. Log error but maybe don't fail confirmation?
+            # Or fail and ask support? For now, let's fail to ensure integrity.
+            return Response({"error": "Seller wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         agreement.status = 'completed'
         agreement.completed_at = timezone.now()
