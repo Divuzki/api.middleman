@@ -90,6 +90,9 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         offer_dict = serialized_message['offer']
         if offer_dict and 'amount' in offer_dict:
             offer_dict['amount'] = float(offer_dict['amount'])
+            
+        # We need to ensure 'createdAt' is present (it is via serializer now)
+        # serialized_message uses ChatMessageSerializer -> AgreementOfferSerializer which now has createdAt
 
         # Construct response with offer object
         response_data = {

@@ -115,9 +115,12 @@ class AgreementViewSet(viewsets.ModelViewSet):
             if not pin:
                  return Response({"error": "PIN required for buyer to accept/fund"}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Mock PIN verification and funding
-            # ... verify pin ...
-            # ... deduct funds ...
+            # Verify PIN
+            if user.transaction_pin and user.transaction_pin != pin:
+                 return Response({"error": "Incorrect PIN"}, status=status.HTTP_400_BAD_REQUEST)
+            # If user hasn't set a PIN but sends one, we might assume it's setting it or verify against some default? 
+            # For now, let's strictly require it if set, or just allow if not set (which shouldn't happen in prod).
+            # Mock funding deduction here...
             
             agreement.amount = offer.amount
             agreement.timeline = offer.timeline
@@ -143,6 +146,28 @@ class AgreementViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(agreement).data)
 
+    @action(detail=True, methods=['post'], url_path='reject-offer')
+    def reject_offer(self, request, pk=None):
+        agreement = self.get_object()
+        offer_id = request.data.get('offerId')
+        
+        if not offer_id:
+            return Response({"error": "offerId is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
+        
+        # Ensure user is participant
+        if request.user not in [agreement.initiator, agreement.counterparty, agreement.buyer, agreement.seller]:
+             return Response({"error": "Not a participant"}, status=status.HTTP_403_FORBIDDEN)
+
+        offer.status = 'rejected'
+        offer.save()
+        
+        self._notify_offer_update(offer)
+        self._notify_agreement_update(agreement) # Update last message/status if needed
+        
+        return Response(self.get_serializer(agreement).data)
+
     @action(detail=True, methods=['post'], url_path='complete')
     def complete_agreement(self, request, pk=None):
         agreement = self.get_object()
@@ -154,9 +179,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         if agreement.status not in ['active', 'secured']: # Allow secured for backward compat if needed
              return Response({"error": "Agreement must be active to complete"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Mock release funds
-        agreement.status = 'completed'
-        agreement.completed_at = timezone.now()
+        # Update status to delivered
+        agreement.status = 'delivered'
+        agreement.delivered_at = timezone.now()
         agreement.save()
         
         self._notify_agreement_update(agreement)
@@ -218,20 +243,17 @@ class AgreementViewSet(viewsets.ModelViewSet):
     def _notify_chat_message(self, message):
         channel_layer = get_channel_layer()
         
-        response_data = {
-            'type': 'chat_message',
-            'id': message.id,
-            'text': message.text,
-            'senderId': str(message.sender.id),
-            'senderName': message.sender.get_full_name() or message.sender.username,
-            'timestamp': message.timestamp.isoformat()
-        }
+        # Use serializer to ensure correct field names and senderId (firebase_uid)
+        serialized_data = ChatMessageSerializer(message).data
+        
+        # Override type to match WebSocket spec
+        serialized_data['type'] = 'chat_message'
 
         async_to_sync(channel_layer.group_send)(
             f'agreement_{message.agreement.id}',
             {
                 'type': 'chat_message',
-                'data': response_data
+                'data': serialized_data
             }
         )
 
@@ -241,28 +263,26 @@ class AgreementViewSet(viewsets.ModelViewSet):
             return
 
         channel_layer = get_channel_layer()
-        offer = message.offer
         
-        response_data = {
-            'type': 'offer_created',
-            'id': message.id,
-            'offer': {
-                'id': offer.id,
-                'amount': float(offer.amount),
-                'timeline': offer.timeline,
-                'description': offer.description,
-                'status': offer.status
-            },
-            'senderId': str(message.sender.id),
-            'senderName': message.sender.get_full_name() or message.sender.username,
-            'timestamp': message.timestamp.isoformat()
-        }
+        # Use serializer to ensure correct field names and senderId (firebase_uid)
+        serialized_data = ChatMessageSerializer(message).data
         
+        # Override type to match WebSocket spec
+        serialized_data['type'] = 'offer_created'
+        
+        # Ensure offer details are correctly nested (already done by serializer)
+        # But we need to make sure 'amount' is a float in the nested offer object if not handled by serializer
+        if 'offer' in serialized_data and serialized_data['offer']:
+             try:
+                 serialized_data['offer']['amount'] = float(serialized_data['offer']['amount'])
+             except (ValueError, TypeError):
+                 pass
+
         async_to_sync(channel_layer.group_send)(
             f'agreement_{message.agreement.id}',
             {
                 'type': 'offer_created',
-                'data': response_data
+                'data': serialized_data
             }
         )
 
@@ -337,10 +357,23 @@ class AgreementViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='confirm')
     def confirm_agreement(self, request, pk=None):
         agreement = self.get_object()
-        # Mock release funds
+        user = request.user
+
+        if agreement.buyer != user:
+            return Response({"error": "Only buyer can confirm agreement"}, status=status.HTTP_403_FORBIDDEN)
+        
+        if agreement.status != 'delivered':
+             return Response({"error": "Agreement must be delivered to confirm"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Mock release funds to Seller wallet
+        # ... logic to transfer funds ...
+
         agreement.status = 'completed'
         agreement.completed_at = timezone.now()
         agreement.save()
+        
+        self._notify_agreement_update(agreement)
+
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['get', 'post'], url_path='messages')

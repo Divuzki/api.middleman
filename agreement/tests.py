@@ -165,8 +165,45 @@ class AgreementTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         agreement.refresh_from_db()
+        self.assertEqual(agreement.status, 'delivered')
+        self.assertIsNotNone(agreement.delivered_at)
+
+    def test_confirm_agreement(self):
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, seller=self.user, buyer=self.user,
+            status='delivered', creator_role='seller'
+        )
+        
+        # User is initiator/buyer in setup? No, setup user is generic.
+        # Let's ensure self.user is the buyer
+        agreement.buyer = self.user
+        agreement.save()
+        
+        response = self.client.post(f'/agreements/{agreement.id}/confirm/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        agreement.refresh_from_db()
         self.assertEqual(agreement.status, 'completed')
         self.assertIsNotNone(agreement.completed_at)
+
+    def test_reject_offer(self):
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, buyer=self.user,
+            creator_role='buyer'
+        )
+        offer = AgreementOffer.objects.create(
+            agreement=agreement, amount=100, description="Offer", timeline="1d", status='pending'
+        )
+        
+        response = self.client.post(f'/agreements/{agreement.id}/reject-offer/', {
+            'offerId': offer.id
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        offer.refresh_from_db()
+        self.assertEqual(offer.status, 'rejected')
 
 class WebSocketTests(TestCase):
     databases = {'default', 'agreement_db'}

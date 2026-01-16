@@ -17,9 +17,11 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         return f"{obj.first_name} {obj.last_name}".strip() or obj.email
 
 class AgreementOfferSerializer(serializers.ModelSerializer):
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+
     class Meta:
         model = AgreementOffer
-        fields = ['id', 'amount', 'description', 'timeline', 'status', 'created_at']
+        fields = ['id', 'amount', 'description', 'timeline', 'status', 'createdAt']
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
