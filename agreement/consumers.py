@@ -86,11 +86,16 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         message = await self.save_offer(self.user, self.agreement_id, amount, description, timeline)
         serialized_message = await self.serialize_message(message)
         
+        # Cast amount to float for consistency with spec and views
+        offer_dict = serialized_message['offer']
+        if offer_dict and 'amount' in offer_dict:
+            offer_dict['amount'] = float(offer_dict['amount'])
+
         # Construct response with offer object
         response_data = {
             'type': 'offer_created',
             'id': serialized_message['id'],
-            'offer': serialized_message['offer'],
+            'offer': offer_dict,
             'senderId': serialized_message['senderId'],
             'senderName': serialized_message['senderName'],
             'timestamp': serialized_message['timestamp']
@@ -161,6 +166,22 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                    agreement.buyer == user or agreement.seller == user
         except Agreement.DoesNotExist:
             return False
+
+    @database_sync_to_async
+    def get_agreement_data_for_list(self, agreement_id):
+        agreement = Agreement.objects.get(id=agreement_id)
+        participants = set()
+        if agreement.initiator_id: participants.add(agreement.initiator_id)
+        if agreement.counterparty_id: participants.add(agreement.counterparty_id)
+        if agreement.buyer_id: participants.add(agreement.buyer_id)
+        if agreement.seller_id: participants.add(agreement.seller_id)
+        
+        return {
+            'id': agreement.id,
+            'title': agreement.title,
+            'status': agreement.status,
+            'participants': list(participants)
+        }
 
     @database_sync_to_async
     def save_message(self, user, agreement_id, text):

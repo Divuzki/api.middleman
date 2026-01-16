@@ -86,6 +86,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         agreement.status = 'awaiting_acceptance'
         agreement.save()
         
+        self._notify_agreement_update(agreement)
+
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='accept-offer')
@@ -135,6 +137,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
             offer.status = 'accepted_by_seller'
             offer.save()
             self._notify_offer_update(offer)
+            # Agreement status doesn't change here, but maybe last message/activity update?
+            # Let's notify agreement update just in case user list needs refresh
+            self._notify_agreement_update(agreement)
 
         return Response(self.get_serializer(agreement).data)
 
@@ -158,20 +163,106 @@ class AgreementViewSet(viewsets.ModelViewSet):
         
         return Response(self.get_serializer(agreement).data)
 
-    def _notify_agreement_update(self, agreement):
+    def _get_participants(self, agreement):
+        users = set()
+        if agreement.initiator: users.add(agreement.initiator)
+        if agreement.counterparty: users.add(agreement.counterparty)
+        if agreement.buyer: users.add(agreement.buyer)
+        if agreement.seller: users.add(agreement.seller)
+        return users
+
+    def _notify_agreement_update(self, agreement, last_message=None):
         channel_layer = get_channel_layer()
-        group_name = f'agreement_{agreement.id}'
+        
+        # 1. Notify Agreement Group (Detailed update)
+        agreement_data = {
+            'status': agreement.status,
+            'amount': float(agreement.amount) if agreement.amount else None,
+            'timeline': agreement.timeline,
+            'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
+            'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
+        }
+
         async_to_sync(channel_layer.group_send)(
-            group_name,
+            f'agreement_{agreement.id}',
             {
                 'type': 'agreement_updated',
-                'data': {
-                    'status': agreement.status,
-                    'amount': float(agreement.amount) if agreement.amount else None,
-                    'timeline': agreement.timeline,
-                    'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
-                    'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
+                'data': agreement_data
+            }
+        )
+        
+        # 2. Notify User Groups (List update)
+        # We need the last message text. If not provided, try to fetch it.
+        if last_message is None:
+            last_msg_obj = agreement.messages.last()
+            last_message = last_msg_obj.text if last_msg_obj else ""
+            if not last_message and last_msg_obj and last_msg_obj.message_type == 'offer':
+                 last_message = f"Offer: {last_msg_obj.offer.amount}"
+
+        user_data = {
+            'id': agreement.id,
+            'title': agreement.title,
+            'status': agreement.status,
+            'lastMessage': last_message
+        }
+        
+        for user in self._get_participants(agreement):
+            async_to_sync(channel_layer.group_send)(
+                f'user_{user.id}',
+                {
+                    'type': 'agreement_updated',
+                    'data': user_data
                 }
+            )
+
+    def _notify_chat_message(self, message):
+        channel_layer = get_channel_layer()
+        
+        response_data = {
+            'type': 'chat_message',
+            'id': message.id,
+            'text': message.text,
+            'senderId': str(message.sender.id),
+            'senderName': message.sender.get_full_name() or message.sender.username,
+            'timestamp': message.timestamp.isoformat()
+        }
+
+        async_to_sync(channel_layer.group_send)(
+            f'agreement_{message.agreement.id}',
+            {
+                'type': 'chat_message',
+                'data': response_data
+            }
+        )
+
+    def _notify_offer_created(self, message):
+        # message is the ChatMessage of type 'offer'
+        if message.message_type != 'offer' or not message.offer:
+            return
+
+        channel_layer = get_channel_layer()
+        offer = message.offer
+        
+        response_data = {
+            'type': 'offer_created',
+            'id': message.id,
+            'offer': {
+                'id': offer.id,
+                'amount': float(offer.amount),
+                'timeline': offer.timeline,
+                'description': offer.description,
+                'status': offer.status
+            },
+            'senderId': str(message.sender.id),
+            'senderName': message.sender.get_full_name() or message.sender.username,
+            'timestamp': message.timestamp.isoformat()
+        }
+        
+        async_to_sync(channel_layer.group_send)(
+            f'agreement_{message.agreement.id}',
+            {
+                'type': 'offer_created',
+                'data': response_data
             }
         )
 
@@ -209,6 +300,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         offer.status = 'accepted'
         offer.save()
         
+        self._notify_agreement_update(agreement)
+        self._notify_offer_update(offer)
+        
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='fund')
@@ -218,6 +312,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         agreement.status = 'secured'
         agreement.secured_at = timezone.now()
         agreement.save()
+        
+        self._notify_agreement_update(agreement)
+        
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='deliver')
@@ -232,6 +329,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         agreement.status = 'delivered'
         agreement.delivered_at = timezone.now()
         agreement.save()
+        
+        self._notify_agreement_update(agreement)
+        
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='confirm')
@@ -291,5 +391,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
             message_type='offer',
             offer=offer
         )
+        
+        self._notify_offer_created(message)
+        self._notify_agreement_update(agreement, last_message=f"Offer: {amount}")
         
         return Response(ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)

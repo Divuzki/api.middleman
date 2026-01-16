@@ -225,10 +225,11 @@ class WebSocketTests(TestCase):
             }
         })
 
+        # Receive broadcast
         response = await communicator.receive_json_from()
-        self.assertEqual(response['type'], 'chat_message')
+        self.assertEqual(response['type'], 'offer_created')
         self.assertIn('offer', response)
-        self.assertEqual(response['offer']['amount'], '1000.00')
+        self.assertEqual(response['offer']['amount'], 1000.0)
         self.assertEqual(response['offer']['description'], 'Offer Description')
         self.assertEqual(response['senderId'], 'ws_uid_123')
 
