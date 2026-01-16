@@ -231,7 +231,7 @@ class AgreementTests(TestCase):
         self.assertEqual(offer.status, 'rejected')
 
 class WebSocketTests(TestCase):
-    databases = {'default', 'agreement_db'}
+    databases = {'default', 'agreement_db', 'wallet_db'}
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -295,4 +295,102 @@ class WebSocketTests(TestCase):
         self.assertEqual(response['offer']['description'], 'Offer Description')
         self.assertEqual(response['senderId'], 'ws_uid_123')
 
+        await communicator.disconnect()
+
+    @patch('agreement.consumers.auth.verify_id_token')
+    async def test_accept_offer_ws(self, mock_verify_token):
+        mock_verify_token.return_value = {
+            'uid': 'ws_uid_123',
+            'email': 'ws_test@example.com'
+        }
+        
+        # Setup wallet and offer
+        await database_sync_to_async(Wallet.objects.create)(user_id=self.user.id, balance=2000.0)
+        self.user.transaction_pin = '1234'
+        await database_sync_to_async(self.user.save)()
+        
+        offer = await database_sync_to_async(AgreementOffer.objects.create)(
+            agreement=self.agreement, amount=1000, description="Offer", timeline="2d", status='pending'
+        )
+        
+        communicator = WebsocketCommunicator(
+            application, 
+            f"/ws/agreements/{self.agreement.id}/?token=valid_token"
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        
+        # Accept offer
+        await communicator.send_json_to({
+            "type": "offer_accepted",
+            "offerId": offer.id,
+            "pin": "1234"
+        })
+        
+        # Expect updates
+        # 1. Agreement update
+        response1 = await communicator.receive_json_from()
+        # 2. Offer update
+        response2 = await communicator.receive_json_from()
+        
+        # Order might vary depending on implementation, but consumer calls agreement_update then offer_update
+        self.assertEqual(response1['type'], 'agreement_updated')
+        self.assertEqual(response1['status'], 'active')
+        
+        self.assertEqual(response2['type'], 'offer_updated')
+        self.assertEqual(response2['offerId'], offer.id)
+        self.assertEqual(response2['status'], 'accepted')
+        
+        # Verify DB
+        await database_sync_to_async(offer.refresh_from_db)()
+        self.assertEqual(offer.status, 'accepted')
+        
+        await communicator.disconnect()
+
+    @patch('agreement.consumers.auth.verify_id_token')
+    async def test_confirm_agreement_ws(self, mock_verify_token):
+        mock_verify_token.return_value = {
+            'uid': 'ws_uid_123',
+            'email': 'ws_test@example.com'
+        }
+        
+        # Setup: Agreement delivered, User is buyer
+        self.agreement.status = 'delivered'
+        self.agreement.amount = 1000.0
+        # Need a seller
+        seller = await database_sync_to_async(User.objects.create_user)(
+            email='seller_ws@test.com', password='pw', firebase_uid='uid_sell_ws'
+        )
+        self.agreement.seller = seller
+        await database_sync_to_async(self.agreement.save)()
+        
+        # Seller wallet
+        seller_wallet = await database_sync_to_async(Wallet.objects.create)(user_id=seller.id, balance=0.0)
+        
+        communicator = WebsocketCommunicator(
+            application, 
+            f"/ws/agreements/{self.agreement.id}/?token=valid_token"
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        
+        # Confirm
+        await communicator.send_json_to({
+            "type": "agreement_confirmed",
+            "agreementId": self.agreement.id
+        })
+        
+        # Expect agreement update
+        response = await communicator.receive_json_from()
+        self.assertEqual(response['type'], 'agreement_updated')
+        self.assertEqual(response['status'], 'completed')
+        
+        # Verify DB
+        await database_sync_to_async(self.agreement.refresh_from_db)()
+        self.assertEqual(self.agreement.status, 'completed')
+        
+        # Verify Seller Wallet
+        await database_sync_to_async(seller_wallet.refresh_from_db)()
+        self.assertEqual(float(seller_wallet.balance), 1000.0)
+        
         await communicator.disconnect()

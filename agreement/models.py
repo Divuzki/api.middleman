@@ -73,6 +73,7 @@ class AgreementOffer(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
+        ('accepted_by_seller', 'Accepted by Seller'),
         ('rejected', 'Rejected'),
     ]
 
