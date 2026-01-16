@@ -88,7 +88,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         
         # Construct response with offer object
         response_data = {
-            'type': 'chat_message',
+            'type': 'offer_created',
             'id': serialized_message['id'],
             'offer': serialized_message['offer'],
             'senderId': serialized_message['senderId'],
