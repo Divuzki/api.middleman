@@ -59,6 +59,9 @@ INSTALLED_APPS = [
     'wallet',
     'wager',
     'agreement',
+
+    # Project Config (for management commands)
+    'middleman_api',
 ]
 
 MIDDLEWARE = [
