@@ -162,6 +162,7 @@ class AgreementTests(TestCase):
         self.assertEqual(agreement.status, 'active')
         self.assertIsNotNone(agreement.secured_at)
         self.assertEqual(offer.status, 'accepted')
+        self.assertEqual(agreement.active_offer, offer)
         
         # Verify wallet debit
         self.assertEqual(float(buyer_wallet.balance), 400.00) # 500 - 100
@@ -336,6 +337,7 @@ class WebSocketTests(TestCase):
         # Order might vary depending on implementation, but consumer calls agreement_update then offer_update
         self.assertEqual(response1['type'], 'agreement_updated')
         self.assertEqual(response1['status'], 'active')
+        self.assertEqual(response1['activeOfferId'], offer.id)
         
         self.assertEqual(response2['type'], 'offer_updated')
         self.assertEqual(response2['offerId'], offer.id)

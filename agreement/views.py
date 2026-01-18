@@ -153,6 +153,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
             agreement.timeline = offer.timeline
             agreement.status = 'active'
             agreement.secured_at = timezone.now()
+            agreement.active_offer = offer
             agreement.save()
             
             offer.status = 'accepted'
@@ -229,6 +230,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         # 1. Notify Agreement Group (Detailed update)
         agreement_data = {
             'status': agreement.status,
+            'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
             'amount': float(agreement.amount) if agreement.amount else None,
             'timeline': agreement.timeline,
             'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,

@@ -45,6 +45,8 @@ class Agreement(models.Model):
     buyer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='buying_agreements', db_constraint=False)
     seller = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='selling_agreements', db_constraint=False)
     
+    active_offer = models.ForeignKey('AgreementOffer', on_delete=models.SET_NULL, null=True, blank=True, related_name='active_agreement', db_constraint=False)
+
     creator_role = models.CharField(max_length=10, choices=[('buyer', 'Buyer'), ('seller', 'Seller')])
     
     terms = models.TextField(null=True, blank=True)
