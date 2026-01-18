@@ -302,7 +302,15 @@ else:
     print("Warning: FIREBASE_CREDENTIALS_PATH not set. Firebase Admin not initialized.")
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True # For development
+CORS_ALLOW_ALL_ORIGINS = True if DEBUG else False
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://localhost",
+    "http://localhost",
+    "http://localhost:8100",
+    "capacitor://localhost",
+]
 
 EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
 ANYMAIL = {

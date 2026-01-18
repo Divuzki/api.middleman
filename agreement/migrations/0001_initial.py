@@ -35,10 +35,10 @@ class Migration(migrations.Migration):
                 ('secured_at', models.DateTimeField(blank=True, null=True)),
                 ('delivered_at', models.DateTimeField(blank=True, null=True)),
                 ('completed_at', models.DateTimeField(blank=True, null=True)),
-                ('buyer', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='buying_agreements', to=settings.AUTH_USER_MODEL)),
-                ('counterparty', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='participated_agreements', to=settings.AUTH_USER_MODEL)),
-                ('initiator', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='initiated_agreements', to=settings.AUTH_USER_MODEL)),
-                ('seller', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='selling_agreements', to=settings.AUTH_USER_MODEL)),
+                ('buyer', models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='buying_agreements', to=settings.AUTH_USER_MODEL)),
+                ('counterparty', models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='participated_agreements', to=settings.AUTH_USER_MODEL)),
+                ('initiator', models.ForeignKey(db_constraint=False, on_delete=django.db.models.deletion.CASCADE, related_name='initiated_agreements', to=settings.AUTH_USER_MODEL)),
+                ('seller', models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='selling_agreements', to=settings.AUTH_USER_MODEL)),
             ],
         ),
         migrations.CreateModel(
@@ -62,7 +62,7 @@ class Migration(migrations.Migration):
                 ('timestamp', models.DateTimeField(auto_now_add=True)),
                 ('agreement', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='messages', to='agreement.agreement')),
                 ('offer', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='agreement.agreementoffer')),
-                ('sender', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL)),
+                ('sender', models.ForeignKey(db_constraint=False, on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL)),
             ],
         ),
     ]
