@@ -96,11 +96,21 @@ TEMPLATES = [
 WSGI_APPLICATION = 'middleman_api.wsgi.application'
 ASGI_APPLICATION = 'middleman_api.asgi.application'
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+if os.getenv("REDIS_URL"):
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [os.getenv("REDIS_URL")],
+            },
+        },
     }
-}
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer"
+        }
+    }
 
 
 # Database
