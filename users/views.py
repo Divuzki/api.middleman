@@ -6,13 +6,14 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password
-from .models import PayoutAccount
+from .models import PayoutAccount, DeviceProfile
 from .serializers import (
     UserSerializer, UserProfileUpdateSerializer, 
     UserProfilePictureSerializer, PayoutAccountSerializer, 
     BankVerificationSerializer, IdentityVerificationInputSerializer,
     IdentityStatusSerializer, SetAccountPinSerializer
 )
+from .serializers import DeviceProfileSerializer
 
 class AuthView(ListAPIView):
     permission_classes = [IsAuthenticated]
@@ -207,3 +208,95 @@ class SetAccountPinView(GenericAPIView):
             "status": "error",
             "message": "PIN must be exactly 4 digits"
         }, status=status.HTTP_400_BAD_REQUEST)
+
+class DeviceListCreateView(ListCreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = DeviceProfileSerializer
+
+    def get_queryset(self):
+        return DeviceProfile.objects.filter(user=self.request.user)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Calculate current_device
+        # Assuming the request might contain the device_uuid in a header "X-Device-UUID"
+        current_device_uuid = request.headers.get('X-Device-UUID')
+        
+        data = []
+        for device in serializer.data:
+            device_data = dict(device)
+            device_data['current_device'] = (device_data['device_uuid'] == current_device_uuid)
+            data.append(device_data)
+
+        return Response({
+            "data": data
+        })
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            device_profile = serializer.save()
+            return Response({
+                "status": "success",
+                "data": {
+                    "device_uuid": device_profile.device_uuid,
+                    "device_name": device_profile.device_name,
+                    "is_active": device_profile.is_active
+                }
+            }, status=status.HTTP_200_OK) # Returning 200 as it might be an update
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class DeviceDetailView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = DeviceProfileSerializer
+    lookup_field = 'device_uuid'
+
+    def get_queryset(self):
+        return DeviceProfile.objects.filter(user=self.request.user)
+
+    def patch(self, request, device_uuid):
+        """Toggle Device Status"""
+        device = get_object_or_404(self.get_queryset(), device_uuid=device_uuid)
+        
+        is_active = request.data.get('is_active')
+        if is_active is not None:
+            device.is_active = is_active
+            device.save()
+            
+            # If we are disabling the device, we might want to deactivate the FCM token too
+            if not is_active and device.fcm_device:
+                device.fcm_device.active = False
+                device.fcm_device.save()
+            elif is_active and device.fcm_device:
+                device.fcm_device.active = True
+                device.fcm_device.save()
+
+        return Response({
+            "status": "success",
+            "data": {
+                "device_uuid": device.device_uuid,
+                "is_active": device.is_active
+            }
+        })
+
+    def delete(self, request, device_uuid):
+        """Logout Device"""
+        device = get_object_or_404(self.get_queryset(), device_uuid=device_uuid)
+        
+        # Remove FCM association (stops notifications)
+        if device.fcm_device:
+            device.fcm_device.delete()
+            device.fcm_device = None
+            device.save()
+            
+        # We keep the device profile as per requirements, or maybe just mark it inactive?
+        # The requirements say "Removes the FCM token association... but keeps the device record"
+        # So we just deleted the FCMDevice linkage above.
+        
+        return Response({
+            "status": "success",
+            "message": "Device logged out successfully"
+        }, status=status.HTTP_200_OK)
+

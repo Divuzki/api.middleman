@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'wallet',
     'wager',
     'agreement',
+    'fcm_django',
 
     # Project Config (for management commands)
     'middleman_api',
@@ -283,6 +284,18 @@ REST_FRAMEWORK = {
 
 # Firebase Configuration
 FIREBASE_CREDENTIALS_PATH = os.getenv('FIREBASE_CREDENTIALS_PATH')
+
+# FCM Django Settings
+FCM_DJANGO_SETTINGS = {
+    # default: _('FCM Django')
+    "APP_VERBOSE_NAME": "FCM Django",
+    # true if you want to send only to active devices (fcm_device.active)
+    "ONE_DEVICE_PER_USER": False,
+    # devices to which notifications cannot be sent,
+    # are deleted upon receiving error response from FCM
+    # default: False
+    "DELETE_INACTIVE_DEVICES": False,
+}
 
 if FIREBASE_CREDENTIALS_PATH:
     if not firebase_admin._apps:

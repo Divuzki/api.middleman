@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import PayoutAccount
+from fcm_django.models import FCMDevice
+from .models import PayoutAccount, DeviceProfile
 
 User = get_user_model()
 
@@ -61,3 +62,49 @@ class SetAccountPinSerializer(serializers.Serializer):
         if not value.isdigit():
             raise serializers.ValidationError("PIN must contain only digits.")
         return value
+
+class DeviceProfileSerializer(serializers.ModelSerializer):
+    device_uuid = serializers.CharField(max_length=255)
+    device_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    fcm_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    platform = serializers.ChoiceField(choices=[('ios', 'ios'), ('android', 'android'), ('web', 'web')], write_only=True, required=False)
+    
+    class Meta:
+        model = DeviceProfile
+        fields = ['device_uuid', 'device_name', 'last_login', 'is_active', 'fcm_token', 'platform']
+        read_only_fields = ['last_login', 'is_active']
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        device_uuid = validated_data.get('device_uuid')
+        device_name = validated_data.get('device_name', '')
+        fcm_token = validated_data.pop('fcm_token', None)
+        platform = validated_data.pop('platform', 'android') # Default to android if not specified? Or maybe required.
+
+        # Check if device exists
+        device_profile, created = DeviceProfile.objects.update_or_create(
+            device_uuid=device_uuid,
+            defaults={
+                'user': user,
+                'device_name': device_name,
+                'is_active': True
+            }
+        )
+
+        if fcm_token:
+            # Handle FCM Device
+            # We use the fcm_token as registration_id
+            fcm_device, _ = FCMDevice.objects.update_or_create(
+                registration_id=fcm_token,
+                defaults={
+                    'user': user,
+                    'type': platform,
+                    'name': device_name,
+                    'active': True
+                }
+            )
+            device_profile.fcm_device = fcm_device
+            device_profile.save()
+
+        return device_profile
+

@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from fcm_django.models import FCMDevice
 
 class UserManager(BaseUserManager):
     """Define a model manager for User model with no username field."""
@@ -66,3 +67,36 @@ class PayoutAccount(models.Model):
 
     def __str__(self):
         return f"{self.bank_name} - {self.account_number}"
+
+
+class DeviceProfile(models.Model):
+    """
+    Links a physical hardware device to an FCM token.
+    Allows multiple logins from the same device to be tracked as one entity.
+    """
+    user = models.ForeignKey(
+        'users.User', 
+        on_delete=models.CASCADE, 
+        related_name='devices'
+    )
+    # The unique hardware ID from @capacitor/device
+    device_uuid = models.CharField(max_length=255, unique=True, db_index=True)
+    
+    # Human readable name (e.g. "iPhone 15 Pro", "Samsung S24")
+    device_name = models.CharField(max_length=255, blank=True)
+    
+    # The actual FCM token for push delivery
+    fcm_device = models.OneToOneField(
+        FCMDevice, 
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+    
+    last_login = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.device_name} ({self.user.email})"
