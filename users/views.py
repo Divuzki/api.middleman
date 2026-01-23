@@ -15,6 +15,14 @@ from .serializers import (
 )
 from .serializers import DeviceProfileSerializer
 
+from django.db.models import Q
+from wager.models import Wager
+from wager.serializers import WagerSerializer
+from agreement.models import Agreement
+from agreement.serializers import AgreementSerializer
+from wallet.models import Transaction
+from wallet.serializers import TransactionSerializer
+
 class AuthView(ListAPIView):
     permission_classes = [IsAuthenticated]
 
@@ -299,4 +307,67 @@ class DeviceDetailView(GenericAPIView):
             "status": "success",
             "message": "Device logged out successfully"
         }, status=status.HTTP_200_OK)
+
+class UserActivitiesView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        page = int(request.query_params.get('page', 1))
+        limit = int(request.query_params.get('limit', 10))
+        activity_type = request.query_params.get('type', 'all')
+
+        activities = []
+
+        # Fetch Wagers
+        if activity_type in ['all', 'wager']:
+            wagers = Wager.objects.filter(
+                Q(creator=user) | Q(opponent=user)
+            ).order_by('-created_at')
+            
+            for w in wagers:
+                activities.append({
+                    "id": f"act_{w.id}",
+                    "type": "wager",
+                    "date": w.created_at,
+                    "data": WagerSerializer(w).data
+                })
+
+        # Fetch Agreements
+        if activity_type in ['all', 'agreement']:
+            agreements = Agreement.objects.filter(
+                Q(initiator=user) | Q(counterparty=user)
+            ).order_by('-created_at')
+            
+            for a in agreements:
+                activities.append({
+                    "id": f"act_{a.id}",
+                    "type": "agreement",
+                    "date": a.created_at,
+                    "data": AgreementSerializer(a, context={'request': request}).data
+                })
+
+        # Fetch Transactions
+        if activity_type in ['all', 'transaction']:
+            transactions = Transaction.objects.filter(
+                wallet__user_id=user.id
+            ).order_by('-created_at')
+            
+            for t in transactions:
+                activities.append({
+                    "id": f"act_{t.id}",
+                    "type": "transaction",
+                    "date": t.created_at,
+                    "data": TransactionSerializer(t).data
+                })
+
+        # Sort combined list
+        activities.sort(key=lambda x: x['date'], reverse=True)
+
+        # Paginate
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_activities = activities[start:end]
+
+        return Response(paginated_activities, status=status.HTTP_200_OK)
 

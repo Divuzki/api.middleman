@@ -3,7 +3,8 @@ from .views import (
     AuthView, UserProfileUpdateView, UserProfilePictureUpdateView,
     BankListView, PayoutAccountListCreateView, PayoutAccountDeleteView,
     VerifyBankAccountView, IdentityVerificationView, IdentityStatusView,
-    SetAccountPinView, DeviceListCreateView, DeviceDetailView
+    SetAccountPinView, DeviceListCreateView, DeviceDetailView,
+    UserActivitiesView
 )
 
 urlpatterns = [
@@ -19,4 +20,5 @@ urlpatterns = [
     re_path(r'^user/pin/?$', SetAccountPinView.as_view(), name='set-account-pin'),
     re_path(r'^user/devices/?$', DeviceListCreateView.as_view(), name='device-list-create'),
     re_path(r'^user/devices/(?P<device_uuid>[0-9a-f-]+)/?$', DeviceDetailView.as_view(), name='device-detail'),
+    re_path(r'^activities/?$', UserActivitiesView.as_view(), name='user-activities'),
 ]
