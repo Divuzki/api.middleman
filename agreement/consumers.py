@@ -1,12 +1,14 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from firebase_admin import auth
+from firebase_admin import auth, messaging
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.cache import cache
 from .models import Agreement, ChatMessage, AgreementOffer
 from .serializers import ChatMessageSerializer, AgreementSerializer
 from wallet.models import Wallet, Transaction
+from users.models import DeviceProfile
 import logging
 import uuid
 
@@ -33,6 +35,9 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
 
+        # Presence Tracking: Mark user as online
+        await self.set_user_online(self.agreement_id, self.user.id)
+
         await self.accept()
 
     async def disconnect(self, close_code):
@@ -41,6 +46,8 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 self.room_group_name,
                 self.channel_name
             )
+            # Presence Tracking: Mark user as offline
+            await self.set_user_offline(self.agreement_id, self.user.id)
 
     async def receive(self, text_data):
         data = json.loads(text_data)
@@ -75,12 +82,12 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             'timestamp': serialized_message['timestamp']
         }
 
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'chat_message',
-                'data': response_data
-            }
+        # Smart Dispatcher: Broadcast + Push
+        await self.notify_users(
+            event_type='chat_message',
+            payload=response_data,
+            push_title=serialized_message['senderName'],
+            push_body=serialized_message['text'][:100] # Truncate body
         )
 
     async def handle_offer_created(self, data):
@@ -110,12 +117,12 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             'timestamp': serialized_message['timestamp']
         }
         
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'offer_created',
-                'data': response_data
-            }
+        # Smart Dispatcher: Broadcast + Push
+        await self.notify_users(
+            event_type='offer_created',
+            payload=response_data,
+            push_title="New Offer",
+            push_body=f"{serialized_message['senderName']} sent an offer: {description}"
         )
 
     async def handle_offer_accepted(self, data):
@@ -131,32 +138,33 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             agreement = result['agreement']
             offer = result['offer']
             
-            # Notify Agreement Update
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
+            # Smart Dispatcher: Agreement Update (Critical)
+            await self.notify_users(
+                event_type='agreement_updated',
+                payload={
                     'type': 'agreement_updated',
-                    'data': {
-                        'status': agreement.status,
-                        'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
-                        'amount': float(agreement.amount) if agreement.amount else None,
-                        'timeline': agreement.timeline,
-                        'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
-                        'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
-                    }
-                }
+                    'status': agreement.status,
+                    'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
+                    'amount': float(agreement.amount) if agreement.amount else None,
+                    'timeline': agreement.timeline,
+                    'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
+                    'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
+                },
+                push_title="Agreement Active",
+                push_body=f"Offer accepted and funds locked. Work can begin.",
+                is_critical=True
             )
             
-            # Notify Offer Update
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
+            # Smart Dispatcher: Offer Update
+            await self.notify_users(
+                event_type='offer_updated',
+                payload={
                     'type': 'offer_updated',
-                    'data': {
-                        'offerId': offer.id,
-                        'status': offer.status
-                    }
-                }
+                    'offerId': offer.id,
+                    'status': offer.status
+                },
+                push_title="Offer Accepted",
+                push_body="The offer has been accepted."
             )
 
     async def handle_offer_rejected(self, data):
@@ -168,15 +176,17 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         
         if result['success']:
             offer = result['offer']
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
+            
+            # Smart Dispatcher: Offer Update
+            await self.notify_users(
+                event_type='offer_updated',
+                payload={
                     'type': 'offer_updated',
-                    'data': {
-                        'offerId': offer.id,
-                        'status': offer.status
-                    }
-                }
+                    'offerId': offer.id,
+                    'status': offer.status
+                },
+                push_title="Offer Rejected",
+                push_body="The offer has been rejected."
             )
 
     async def handle_agreement_confirmed(self, data):
@@ -185,19 +195,22 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         
         if result['success']:
             agreement = result['agreement']
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
+            
+            # Smart Dispatcher: Agreement Update (Critical)
+            await self.notify_users(
+                event_type='agreement_updated',
+                payload={
                     'type': 'agreement_updated',
-                    'data': {
-                        'status': agreement.status,
-                        'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
-                        'amount': float(agreement.amount) if agreement.amount else None,
-                        'timeline': agreement.timeline,
-                        'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
-                        'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
-                    }
-                }
+                    'status': agreement.status,
+                    'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
+                    'amount': float(agreement.amount) if agreement.amount else None,
+                    'timeline': agreement.timeline,
+                    'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
+                    'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
+                },
+                push_title="Agreement Completed",
+                push_body="Work confirmed and funds released.",
+                is_critical=True
             )
 
     # Event handlers
@@ -218,6 +231,102 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         if 'type' not in data:
             data['type'] = 'offer_updated'
         await self.send(text_data=json.dumps(data))
+
+    # Smart Dispatcher Helper
+    async def notify_users(self, event_type, payload, push_title=None, push_body=None, is_critical=False):
+        # 1. Broadcast via WebSocket
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': event_type,
+                'data': payload
+            }
+        )
+
+        # 2. Smart Push Dispatch
+        await self.dispatch_push_notifications(
+            event_type, 
+            payload, 
+            push_title, 
+            push_body, 
+            is_critical
+        )
+
+    @database_sync_to_async
+    def dispatch_push_notifications(self, event_type, payload, title, body, is_critical):
+        try:
+            if not title or not body:
+                return
+
+            # Get all participants
+            agreement = Agreement.objects.get(id=self.agreement_id)
+            participants = set()
+            if agreement.initiator: participants.add(agreement.initiator)
+            if agreement.counterparty: participants.add(agreement.counterparty)
+            
+            # Get online users
+            online_users = cache.get(f'agreement_presence_{self.agreement_id}', set())
+
+            recipients = []
+            for participant in participants:
+                # Skip self (sender)
+                if participant.id == self.user.id:
+                    continue
+                    
+                # Logic: Send if Offline OR Critical
+                is_offline = participant.id not in online_users
+                if is_offline or is_critical:
+                    recipients.append(participant)
+
+            if not recipients:
+                return
+
+            # Send FCM
+            # Construct Deep Link Payload
+            message_payload = {
+                "type": event_type.upper(),
+                "url": f"/app/agreement/{self.agreement_id}",
+                "agreementId": str(self.agreement_id)
+            }
+            
+            # Batch send is tricky with fcm-django 2.x/3.x vs firebase-admin direct
+            # We will iterate and send for simplicity and robustness with fcm-django
+            for recipient in recipients:
+                devices = DeviceProfile.objects.filter(user=recipient, is_active=True, fcm_device__isnull=False)
+                for device_profile in devices:
+                    try:
+                        # Using firebase_admin directly for more control over payload structure
+                        # device_profile.fcm_device.send_message(...) wrapper might limit us
+                        
+                        message = messaging.Message(
+                            token=device_profile.fcm_device.registration_id,
+                            notification=messaging.Notification(
+                                title=title,
+                                body=body,
+                            ),
+                            data=message_payload
+                        )
+                        messaging.send(message)
+                    except Exception as e:
+                        logger.error(f"Failed to send push to {recipient.email}: {e}")
+        except Exception as e:
+            logger.error(f"Error in dispatch_push_notifications: {e}")
+
+    # Presence Tracking Helpers
+    @database_sync_to_async
+    def set_user_online(self, agreement_id, user_id):
+        key = f'agreement_presence_{agreement_id}'
+        online_users = cache.get(key, set())
+        online_users.add(user_id)
+        cache.set(key, online_users, timeout=3600) # 1 hour timeout
+
+    @database_sync_to_async
+    def set_user_offline(self, agreement_id, user_id):
+        key = f'agreement_presence_{agreement_id}'
+        online_users = cache.get(key, set())
+        if user_id in online_users:
+            online_users.remove(user_id)
+            cache.set(key, online_users, timeout=3600)
 
     # DB Helpers
     @database_sync_to_async

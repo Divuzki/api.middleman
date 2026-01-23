@@ -28,6 +28,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     senderName = serializers.SerializerMethodField()
     offer = AgreementOfferSerializer(read_only=True)
     type = serializers.CharField(source='message_type')
+    # Use 'text' directly as per model, which matches spec
 
     class Meta:
         model = ChatMessage
