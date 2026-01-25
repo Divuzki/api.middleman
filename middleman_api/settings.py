@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'wallet',
     'wager',
     'agreement',
+    'rates',
     'fcm_django',
 
     # Project Config (for management commands)
