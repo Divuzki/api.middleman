@@ -337,6 +337,7 @@ CORS_ALLOW_ALL_ORIGINS = True if DEBUG else False
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
+    "https://api.midman.app",
     "https://localhost",
     "http://localhost",
     "http://localhost:8100",
