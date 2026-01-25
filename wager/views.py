@@ -1,5 +1,6 @@
 from rest_framework import viewsets, permissions, filters, pagination
 from rest_framework.response import Response
+from django.db.models import Q
 from .models import Wager
 from .serializers import WagerSerializer
 
@@ -22,17 +23,16 @@ class WagerViewSet(viewsets.ModelViewSet):
         if category:
             queryset = queryset.filter(category=category)
 
-        # Filter by view (e.g., 'mine')
+        # Filter by view (e.g., 'mine', 'for_you')
         view_filter = self.request.query_params.get('view')
+        user_id = self.request.user.id
+        
         if view_filter == 'mine':
-            user = self.request.user
-            # Since relations are cross-db, we might need to filter by ID explicitly 
-            # if Django doesn't translate user object to ID automatically in filter.
-            # But typically filter(creator=user) works if the ID matches.
-            queryset = queryset.filter(creator_id=user.id) 
-            # Or extend to opponent:
-            # from django.db.models import Q
-            # queryset = queryset.filter(Q(creator_id=user.id) | Q(opponent_id=user.id))
+            # Wagers created by the user
+            queryset = queryset.filter(creator_id=user_id)
+        elif view_filter == 'for_you':
+            # Wagers NOT created by the user, and typically only OPEN ones are relevant for a feed
+            queryset = queryset.filter(~Q(creator_id=user_id), status='OPEN')
             
         return queryset
 

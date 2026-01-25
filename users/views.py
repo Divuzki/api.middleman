@@ -14,6 +14,8 @@ from .serializers import (
     IdentityStatusSerializer, SetAccountPinSerializer
 )
 from .serializers import DeviceProfileSerializer
+import requests
+from django.conf import settings
 
 from django.db.models import Q
 from wager.models import Wager
@@ -84,12 +86,26 @@ class BankListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        # Static list of banks as per requirement
+#         curl --location 'https://api.korapay.com/merchant/api/v1/misc/banks?countryCode=NG' \
+# --header 'Authorization: Bearer pk_***' \
+# --header 'Content-Type: application/json' \
+# --data ''
+        
         banks = [
             { "code": "011", "name": "First Bank of Nigeria" },
             { "code": "058", "name": "Guaranty Trust Bank" },
             { "code": "033", "name": "United Bank for Africa" }
         ]
+        # get list of banks from korapay api
+        response = requests.get(
+            "https://api.korapay.com/merchant/api/v1/misc/banks?countryCode=NG",
+            headers={
+                "Authorization": f"Bearer {settings.KORAPAY_PUBLIC_KEY}",
+                "Content-Type": "application/json"
+            }
+        )
+        if response.status_code == 200:
+            banks = response.json().get("data", [])
         return Response({
             "status": "success",
             "data": banks
@@ -144,13 +160,37 @@ class VerifyBankAccountView(GenericAPIView):
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            # Mock verification logic
-            # In a real app, this would call an external API
-            return Response({
-                "status": "success",
-                "valid": True,
-                "accountName": "JOHN DOE" # Mocked name
-            }, status=status.HTTP_200_OK)
+#             curl --location 'https://api.korapay.com/merchant/api/v1/misc/banks/resolve' \
+# --header 'Content-Type: application/json' \
+# --data '{
+# 	"bank": "033",
+# 	"account": "2158634852"
+# }'
+            # Call Korapay API to verify bank account
+            response = requests.post(
+                "https://api.korapay.com/merchant/api/v1/misc/banks/resolve",
+                headers={
+                    "Authorization": f"Bearer {settings.KORAPAY_SECRET_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "bank": serializer.validated_data['bank'],
+                    "account": serializer.validated_data['account']
+                }
+            )
+            # Check if response is successful
+            if response.status_code == 200:
+                data = response.json().get("data", {})
+                return Response({
+                    "status": "success",
+                    "valid": True,
+                    "accountName": data.get("accountName", "Unknown")
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    "status": "error",
+                    "message": "Could not resolve account name"
+                }, status=response.status_code)
         return Response({
             "status": "error",
             "message": "Could not resolve account name"

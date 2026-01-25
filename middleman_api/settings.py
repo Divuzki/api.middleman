@@ -34,6 +34,8 @@ SECRET_KEY = 'django-insecure-^n$tzx$-iumpm+q#5ajp(t1%$*y%*^8o98+5dfdk_^9-syq7h&
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", "True") == "True"
 USE_R2 = os.getenv("USE_R2", "False") == "True"
+KORAPAY_PUBLIC_KEY = os.getenv("KORAPAY_PUBLIC_KEY")
+KORAPAY_SECRET_KEY = os.getenv("KORAPAY_SECRET_KEY")
 
 ALLOWED_HOSTS = ["*"]
 
