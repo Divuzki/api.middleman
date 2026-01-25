@@ -1,0 +1,159 @@
+{% extends "admin/base.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    /* Middleman Theme Overrides */
+    :root {
+        --primary: #3191EB;
+        --secondary: #05ECF4;
+        --accent: #2563eb;
+        --primary-fg: #ffffff;
+        
+        --body-bg: #01032D;
+        --header-bg: #0a0e35;
+        --sidebar-bg: #060825;
+        --content-bg: #01032D;
+        
+        --body-fg: #e2e8f0;
+        --header-color: #ffffff;
+        --link-fg: #3191EB;
+        --link-hover-color: #05ECF4;
+        
+        /* Django Admin Specific Vars (Django 5.0+) */
+        --djs-primary-fg: #ffffff;
+        --djs-body-bg: #01032D;
+        --djs-body-fg: #e2e8f0;
+        --djs-header-bg: #0a0e35;
+        --djs-sidebar-bg: #060825;
+        --djs-link-fg: #3191EB;
+        --djs-selected-bg: rgba(49, 145, 235, 0.2);
+    }
+    
+    body {
+        background-color: var(--body-bg);
+        color: var(--body-fg);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+    
+    /* Gradient Text for Branding */
+    .gradient-text {
+        background: linear-gradient(90deg, #3191eb 0%, #05ecf4 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800;
+    }
+    
+    /* Header Customization */
+    #header {
+        background: var(--header-bg);
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    #branding h1 {
+        color: white;
+    }
+    
+    /* Module/App Headers */
+    .module h2, .module caption, .inline-group h2 {
+        background: #0d1240 !important;
+        color: white !important;
+    }
+    
+    /* Buttons */
+    .button, input[type=submit], input[type=button], .submit-row input, a.button {
+        background: linear-gradient(90deg, #3191eb 0%, #2563eb 100%) !important;
+        color: white !important;
+        border: none;
+        transition: all 0.3s ease;
+    }
+    
+    .button:hover, input[type=submit]:hover, input[type=button]:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 15px rgba(49, 145, 235, 0.4);
+    }
+    
+    .button.default, input[type=submit].default, .submit-row input.default {
+        background: linear-gradient(90deg, #3191eb 0%, #05ecf4 100%) !important;
+    }
+    
+    /* Cards/Modules */
+    .module {
+        background: rgba(255,255,255,0.05) !important;
+        border: 1px solid rgba(255,255,255,0.1);
+        box-shadow: none;
+    }
+    
+    /* Tables */
+    #changelist table thead th {
+        background: #0d1240;
+        color: var(--secondary);
+    }
+    
+    #changelist table tbody tr {
+        background-color: transparent !important;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    
+    #changelist table tbody tr:hover {
+        background-color: rgba(255,255,255,0.05) !important;
+    }
+    
+    .paginator {
+        background: transparent !important;
+        border-top: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    /* Links */
+    a:link, a:visited {
+        color: var(--link-fg);
+    }
+    
+    a:hover {
+        color: var(--link-hover-color);
+    }
+    
+    /* Form inputs */
+    input[type=text], input[type=password], input[type=email], input[type=url], input[type=number], textarea, select, .vTextField {
+        background-color: rgba(0,0,0,0.3) !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        color: white !important;
+        border-radius: 4px;
+    }
+    
+    input:focus, textarea:focus, select:focus {
+        border-color: var(--primary) !important;
+    }
+
+    /* Breadcrumbs */
+    div.breadcrumbs {
+        background: transparent;
+        color: rgba(255,255,255,0.7);
+    }
+    div.breadcrumbs a {
+        color: var(--secondary);
+    }
+    
+    /* Dashboard */
+    .dashboard #content-main {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+    }
+    
+    .dashboard .module {
+        margin-bottom: 0;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    /* Sidebar (if present in modern django admin responsive view) */
+    #nav-sidebar {
+        background: var(--sidebar-bg);
+        border-right: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    /* Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+</style>
+{% endblock %}
