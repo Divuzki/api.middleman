@@ -160,12 +160,12 @@ class VerifyBankAccountView(GenericAPIView):
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-#             curl --location 'https://api.korapay.com/merchant/api/v1/misc/banks/resolve' \
-# --header 'Content-Type: application/json' \
-# --data '{
-# 	"bank": "033",
-# 	"account": "2158634852"
-# }'
+            #             curl --location 'https://api.korapay.com/merchant/api/v1/misc/banks/resolve' \
+            # --header 'Content-Type: application/json' \
+            # --data '{
+            # 	"bank": "033",
+            # 	"account": "2158634852"
+            # }'
             # Call Korapay API to verify bank account
             response = requests.post(
                 "https://api.korapay.com/merchant/api/v1/misc/banks/resolve",
@@ -174,8 +174,8 @@ class VerifyBankAccountView(GenericAPIView):
                     "Content-Type": "application/json"
                 },
                 json={
-                    "bank": serializer.validated_data['bank'],
-                    "account": serializer.validated_data['account']
+                    "bank": serializer.validated_data['bankCode'],
+                    "account": serializer.validated_data['accountNumber']
                 }
             )
             # Check if response is successful
@@ -184,15 +184,17 @@ class VerifyBankAccountView(GenericAPIView):
                 return Response({
                     "status": "success",
                     "valid": True,
-                    "accountName": data.get("accountName", "Unknown")
+                    "accountName": data.get("account_name", "Unknown")
                 }, status=status.HTTP_200_OK)
             else:
                 return Response({
                     "status": "error",
+                    "valid": False,
                     "message": "Could not resolve account name"
                 }, status=response.status_code)
         return Response({
             "status": "error",
+            "valid": False,
             "message": "Could not resolve account name"
         }, status=status.HTTP_400_BAD_REQUEST)
 
