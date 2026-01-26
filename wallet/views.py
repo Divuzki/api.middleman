@@ -10,6 +10,7 @@ from django.db import transaction
 import uuid
 from .models import Wallet, Transaction
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
+from users.notifications import notify_balance_update
 
 class DepositView(APIView):
     permission_classes = [IsAuthenticated]
@@ -162,6 +163,10 @@ class VerifyDepositView(GenericAPIView):
                 # Update transaction status
                 tx.status = 'SUCCESSFUL'
                 tx.save()
+                
+            # Notify user
+            notify_balance_update(request.user)
+            
         except Exception as e:
             return Response({
                 "status": "error",

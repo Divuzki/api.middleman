@@ -2,8 +2,24 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fcm_django.models import FCMDevice
 from .models import PayoutAccount, DeviceProfile
+from wallet.models import Wallet
 
 User = get_user_model()
+
+class AuthUserSerializer(serializers.ModelSerializer):
+    uid = serializers.CharField(source='firebase_uid')
+    balance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['uid', 'email', 'isIdentityVerified', 'has_set_account_pin', 'balance']
+
+    def get_balance(self, obj):
+        try:
+            wallet = Wallet.objects.get(user_id=obj.id)
+            return float(wallet.balance)
+        except Wallet.DoesNotExist:
+            return 0.0
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:

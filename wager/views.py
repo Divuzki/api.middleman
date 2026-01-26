@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from django.db.models import Q
 from .models import Wager
 from .serializers import WagerSerializer
+from users.notifications import notify_badge_counts
 
 class StandardResultsSetPagination(pagination.PageNumberPagination):
     page_size = 10
@@ -37,4 +38,6 @@ class WagerViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(creator=self.request.user)
+        wager = serializer.save(creator=self.request.user)
+        if wager.opponent:
+            notify_badge_counts(wager.opponent)

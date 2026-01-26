@@ -9,6 +9,7 @@ from .serializers import AgreementSerializer, ChatMessageSerializer, AgreementOf
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from wallet.models import Wallet, Transaction
+from users.notifications import notify_balance_update, notify_badge_counts
 import uuid
 
 class AgreementViewSet(viewsets.ModelViewSet):
@@ -88,6 +89,10 @@ class AgreementViewSet(viewsets.ModelViewSet):
         agreement.save()
         
         self._notify_agreement_update(agreement)
+        
+        # Notify participants of status change
+        notify_badge_counts(agreement.initiator)
+        notify_badge_counts(user)
 
         return Response(self.get_serializer(agreement).data)
 
@@ -163,6 +168,12 @@ class AgreementViewSet(viewsets.ModelViewSet):
             self._notify_agreement_update(agreement)
             self._notify_offer_update(offer)
             
+            # Balance Update for Buyer
+            notify_balance_update(user)
+            # Badge Counts
+            notify_badge_counts(user)
+            notify_badge_counts(agreement.seller)
+            
         elif is_seller:
             # Seller accepting an offer (presumably from buyer)
             offer.status = 'accepted_by_seller'
@@ -171,6 +182,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
             # Agreement status doesn't change here, but maybe last message/activity update?
             # Let's notify agreement update just in case user list needs refresh
             self._notify_agreement_update(agreement)
+            
+            notify_badge_counts(agreement.buyer)
+            notify_badge_counts(user)
 
         return Response(self.get_serializer(agreement).data)
 
@@ -194,6 +208,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         self._notify_offer_update(offer)
         self._notify_agreement_update(agreement) # Update last message/status if needed
         
+        for participant in self._get_participants(agreement):
+            notify_badge_counts(participant)
+        
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='complete')
@@ -214,6 +231,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         
         self._notify_agreement_update(agreement)
         
+        notify_badge_counts(agreement.buyer) # Buyer needs to confirm now
+        notify_badge_counts(agreement.seller)
+
         return Response(self.get_serializer(agreement).data)
 
     def _get_participants(self, agreement):
@@ -364,6 +384,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
         
         self._notify_agreement_update(agreement)
         
+        notify_badge_counts(agreement.buyer)
+        notify_badge_counts(agreement.seller)
+
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='deliver')
@@ -427,6 +450,10 @@ class AgreementViewSet(viewsets.ModelViewSet):
         
         self._notify_agreement_update(agreement)
 
+        notify_balance_update(agreement.seller) # Funds released
+        notify_badge_counts(agreement.buyer)
+        notify_badge_counts(agreement.seller)
+
         return Response(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['get', 'post'], url_path='messages')
@@ -481,4 +508,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         self._notify_offer_created(message)
         self._notify_agreement_update(agreement, last_message=f"Offer: {amount}")
         
+        for participant in self._get_participants(agreement):
+            if participant != request.user:
+                notify_badge_counts(participant)
+
         return Response(ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)

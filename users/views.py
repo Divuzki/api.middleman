@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.contrib.auth.hashers import make_password
 from .models import PayoutAccount, DeviceProfile
 from .serializers import (
-    UserSerializer, UserProfileUpdateSerializer, 
+    UserSerializer, AuthUserSerializer, UserProfileUpdateSerializer, 
     UserProfilePictureSerializer, PayoutAccountSerializer, 
     BankVerificationSerializer, IdentityVerificationInputSerializer,
     IdentityStatusSerializer, SetAccountPinSerializer
@@ -25,7 +25,7 @@ from agreement.serializers import AgreementSerializer
 from wallet.models import Transaction
 from wallet.serializers import TransactionSerializer
 
-class AuthView(ListAPIView):
+class AuthView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -33,8 +33,12 @@ class AuthView(ListAPIView):
         Authentication endpoint that returns the authenticated user's data.
         The actual authentication logic is handled by FirebaseAuthentication.
         """
-        serializer = UserSerializer(request.user)
-        return Response(serializer.data)
+        serializer = AuthUserSerializer(request.user)
+        return Response({
+            "status": "success",
+            "valid": True,
+            "user": serializer.data
+        })
 
 class UserProfileUpdateView(GenericAPIView):
     permission_classes = [IsAuthenticated]

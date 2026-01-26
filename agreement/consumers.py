@@ -9,6 +9,7 @@ from .models import Agreement, ChatMessage, AgreementOffer
 from .serializers import ChatMessageSerializer, AgreementSerializer
 from wallet.models import Wallet, Transaction
 from users.models import DeviceProfile
+from users.notifications import get_balance_data, get_badge_counts_data
 import logging
 import uuid
 
@@ -124,6 +125,8 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             push_title="New Offer",
             push_body=f"{serialized_message['senderName']} sent an offer: {description}"
         )
+        
+        await self.notify_participants_badges(self.agreement_id)
 
     async def handle_offer_accepted(self, data):
         offer_id = data.get('offerId')
@@ -167,6 +170,15 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 push_body="The offer has been accepted."
             )
 
+            # Notifications
+            if is_buyer:
+                await self.send_user_notification(self.user.id, 'balance')
+                await self.send_user_notification(self.user.id, 'badge')
+                await self.send_user_notification(agreement.seller_id, 'badge')
+            elif is_seller:
+                await self.send_user_notification(self.user.id, 'badge')
+                await self.send_user_notification(agreement.buyer_id, 'badge')
+
     async def handle_offer_rejected(self, data):
         offer_id = data.get('offerId')
         if not offer_id:
@@ -188,6 +200,8 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 push_title="Offer Rejected",
                 push_body="The offer has been rejected."
             )
+
+            await self.notify_participants_badges(self.agreement_id)
 
     async def handle_agreement_confirmed(self, data):
         # We rely on self.agreement_id for security
@@ -212,6 +226,10 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 push_body="Work confirmed and funds released.",
                 is_critical=True
             )
+
+            # Notifications
+            await self.send_user_notification(agreement.seller_id, 'balance')
+            await self.notify_participants_badges(self.agreement_id)
 
     # Event handlers
     async def chat_message(self, event):
@@ -329,6 +347,42 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             cache.set(key, online_users, timeout=3600)
 
     # DB Helpers
+    @database_sync_to_async
+    def get_agreement_participant_ids(self, agreement_id):
+        try:
+            agreement = Agreement.objects.get(id=agreement_id)
+            ids = set()
+            if agreement.initiator_id: ids.add(agreement.initiator_id)
+            if agreement.counterparty_id: ids.add(agreement.counterparty_id)
+            if agreement.buyer_id: ids.add(agreement.buyer_id)
+            if agreement.seller_id: ids.add(agreement.seller_id)
+            return list(ids)
+        except Agreement.DoesNotExist:
+            return []
+
+    async def notify_participants_badges(self, agreement_id):
+        participants = await self.get_agreement_participant_ids(agreement_id)
+        for uid in participants:
+            await self.send_user_notification(uid, 'badge')
+
+    @database_sync_to_async
+    def get_notification_data(self, user_id, type):
+        try:
+            user = User.objects.get(id=user_id)
+            if type == 'balance':
+                return get_balance_data(user)
+            elif type == 'badge':
+                return get_badge_counts_data(user)
+        except User.DoesNotExist:
+            return None
+
+    async def send_user_notification(self, user_id, type):
+         if not user_id: return
+         data = await self.get_notification_data(user_id, type)
+         if data:
+             event_type = 'balance_update' if type == 'balance' else 'badge_counts'
+             await self.channel_layer.group_send(f'user_{user_id}', {'type': event_type, 'data': data})
+
     @database_sync_to_async
     def get_user_from_token(self):
         query_string = self.scope['query_string'].decode()
@@ -555,6 +609,12 @@ class UserConsumer(AsyncWebsocketConsumer):
             'type': 'agreement_updated',
             'data': event['data']
         }))
+
+    async def balance_update(self, event):
+        await self.send(text_data=json.dumps(event['data']))
+
+    async def badge_counts(self, event):
+        await self.send(text_data=json.dumps(event['data']))
 
     @database_sync_to_async
     def get_user_from_token(self):
