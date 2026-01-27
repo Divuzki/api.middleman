@@ -21,6 +21,7 @@ class Wager(models.Model):
 
     STATUS_CHOICES = [
         ('OPEN', 'Open'),
+        ('DRAW', 'Draw'),
         ('MATCHED', 'Matched'),
         ('COMPLETED', 'Completed'),
         ('CANCELLED', 'Cancelled'),

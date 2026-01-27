@@ -1,10 +1,12 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from firebase_admin import auth
+from firebase_admin import auth, messaging
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from .models import Wager, ChatMessage
 from .serializers import ChatMessageSerializer
+from users.models import DeviceProfile
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,9 @@ class WagerConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
 
+        # Presence Tracking: Mark user as online
+        await self.set_user_online(self.wager_id, self.user.id)
+
         await self.accept()
 
     async def disconnect(self, close_code):
@@ -38,6 +43,8 @@ class WagerConsumer(AsyncWebsocketConsumer):
                 self.room_group_name,
                 self.channel_name
             )
+            # Presence Tracking: Mark user as offline
+            await self.set_user_offline(self.wager_id, self.user.id)
 
     async def receive(self, text_data):
         data = json.loads(text_data)
@@ -54,23 +61,118 @@ class WagerConsumer(AsyncWebsocketConsumer):
         message = await self.save_message(self.user, self.wager_id, message_text)
         serialized_message = await self.serialize_message(message)
 
-        # Broadcast
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'chat_message',
-                'data': serialized_message
-            }
+        # Smart Dispatcher: Broadcast + Push
+        await self.notify_users(
+            event_type='chat_message',
+            payload=serialized_message,
+            push_title=serialized_message['senderName'],
+            push_body=serialized_message['text'][:100] # Truncate body
         )
 
     # Event handlers
     async def chat_message(self, event):
         # Ensure payload structure matches `websocket_api_wager.md`
-        # The serializer keys already match: id, text, senderId, senderName, timestamp
-        # We just need to ensure the top-level type is set
         data = event['data']
         data['type'] = 'chat_message' 
         await self.send(text_data=json.dumps(data))
+
+    # Smart Dispatcher Helper
+    async def notify_users(self, event_type, payload, push_title=None, push_body=None, is_critical=False):
+        # 1. Broadcast via WebSocket
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': event_type,
+                'data': payload
+            }
+        )
+
+        # 2. Smart Push Dispatch
+        await self.dispatch_push_notifications(
+            event_type, 
+            payload, 
+            push_title, 
+            push_body, 
+            is_critical
+        )
+
+    @database_sync_to_async
+    def dispatch_push_notifications(self, event_type, payload, title, body, is_critical):
+        try:
+            if not title or not body:
+                return
+
+            # Get all participants
+            wager = Wager.objects.get(id=self.wager_id)
+            participants = set()
+            if wager.creator: participants.add(wager.creator)
+            if wager.opponent: participants.add(wager.opponent)
+            
+            # Get online users
+            online_users = cache.get(f'wager_presence_{self.wager_id}', set())
+
+            recipients = []
+            for participant in participants:
+                # Skip self (sender)
+                if participant.id == self.user.id:
+                    continue
+                    
+                # Logic: Send if Offline OR Critical
+                is_offline = participant.id not in online_users
+                if is_offline or is_critical:
+                    recipients.append(participant)
+
+            if not recipients:
+                return
+
+            # Send FCM
+            # Construct Deep Link Payload
+            message_payload = {
+                "type": event_type.upper(),
+                "url": f"/app/wager/{self.wager_id}",
+                "wagerId": str(self.wager_id)
+            }
+            
+            for recipient in recipients:
+                devices = DeviceProfile.objects.filter(user=recipient, is_active=True, fcm_device__isnull=False)
+                for device_profile in devices:
+                    try:
+                        message = messaging.Message(
+                            token=device_profile.fcm_device.registration_id,
+                            notification=messaging.Notification(
+                                title=title,
+                                body=body,
+                            ),
+                            android=messaging.AndroidConfig(
+                                priority="high",
+                                notification=messaging.AndroidNotification(
+                                    icon="ic_notification",
+                                    channel_id="default"
+                                )
+                             ),
+                            data=message_payload
+                        )
+                        messaging.send(message)
+                    except Exception as e:
+                        logger.error(f"Failed to send push to {recipient.email}: {e}")
+        except Exception as e:
+            logger.error(f"Error in dispatch_push_notifications: {e}")
+
+    # Presence Tracking Helpers
+    @database_sync_to_async
+    def set_user_online(self, wager_id, user_id):
+        key = f'wager_presence_{wager_id}'
+        online_users = cache.get(key, set())
+        online_users.add(user_id)
+        cache.set(key, online_users, timeout=3600) # 1 hour timeout
+
+    @database_sync_to_async
+    def set_user_offline(self, wager_id, user_id):
+        key = f'wager_presence_{wager_id}'
+        online_users = cache.get(key, set())
+        if user_id in online_users:
+            online_users.remove(user_id)
+            cache.set(key, online_users, timeout=3600)
 
     # DB Helpers
     @database_sync_to_async
