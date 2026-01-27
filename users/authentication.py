@@ -4,6 +4,7 @@ from firebase_admin import auth
 from django.contrib.auth import get_user_model
 from django.conf import settings
 import firebase_admin
+from .emails import send_welcome_email
 
 User = get_user_model()
 
@@ -46,5 +47,9 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
             user = User.objects.create_user(**user_data)
             user.set_unusable_password()
             user.save()
+
+            # Send welcome email
+            send_welcome_email(user)
+
 
         return (user, None)
