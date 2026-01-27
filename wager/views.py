@@ -22,24 +22,46 @@ class WagerViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Wager.objects.all().order_by('-created_at')
         
-        # Filter by category
+        # 1. Search Filter (title or description)
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            queryset = queryset.filter(
+                Q(title__icontains=search_query) | 
+                Q(description__icontains=search_query)
+            )
+
+        # 2. Category Filter
         category = self.request.query_params.get('category')
         if category:
             queryset = queryset.filter(category=category)
 
-        # Filter by view (e.g., 'mine', 'for_you', 'all_markets')
+        # 3. Amount Range Filter
+        min_amount = self.request.query_params.get('minAmount')
+        if min_amount:
+            queryset = queryset.filter(amount__gte=min_amount)
+            
+        max_amount = self.request.query_params.get('maxAmount')
+        if max_amount:
+            queryset = queryset.filter(amount__lte=max_amount)
+
+        # 4. View Filter
         view_filter = self.request.query_params.get('view')
         user_id = self.request.user.id
         
-        if view_filter == 'mine':
-            # Wagers created by the user
-            queryset = queryset.filter(creator_id=user_id)
-        elif view_filter == 'for_you':
-            # Wagers NOT created by the user, and typically only OPEN ones are relevant for a feed
-            queryset = queryset.filter(~Q(creator_id=user_id), status='OPEN')
+        if view_filter == 'for_you':
+            # Updated Logic: "My Active Wagers"
+            # Created by user OR user is opponent
+            # AND status is OPEN or MATCHED
+            queryset = queryset.filter(
+                (Q(creator_id=user_id) | Q(opponent_id=user_id)) &
+                Q(status__in=['OPEN', 'MATCHED'])
+            )
         elif view_filter == 'all_markets':
             # All OPEN wagers available
             queryset = queryset.filter(status='OPEN')
+        elif view_filter == 'mine':
+            # Legacy/Specific: Just wagers created by user (optional, keeping for safety)
+            queryset = queryset.filter(creator_id=user_id)
             
         return queryset
 
