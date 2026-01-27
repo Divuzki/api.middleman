@@ -322,6 +322,13 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                                 title=title,
                                 body=body,
                             ),
+                            android=messaging.AndroidConfig(
+                                priority="high",
+                                notification=messaging.AndroidNotification(
+                                    icon="ic_notification",
+                                    channel_id="default"
+                                )
+                             ),
                             data=message_payload
                         )
                         messaging.send(message)
