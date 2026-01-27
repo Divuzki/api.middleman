@@ -27,7 +27,7 @@ class WagerViewSet(viewsets.ModelViewSet):
         if category:
             queryset = queryset.filter(category=category)
 
-        # Filter by view (e.g., 'mine', 'for_you')
+        # Filter by view (e.g., 'mine', 'for_you', 'all_markets')
         view_filter = self.request.query_params.get('view')
         user_id = self.request.user.id
         
@@ -37,6 +37,9 @@ class WagerViewSet(viewsets.ModelViewSet):
         elif view_filter == 'for_you':
             # Wagers NOT created by the user, and typically only OPEN ones are relevant for a feed
             queryset = queryset.filter(~Q(creator_id=user_id), status='OPEN')
+        elif view_filter == 'all_markets':
+            # All OPEN wagers available
+            queryset = queryset.filter(status='OPEN')
             
         return queryset
 
