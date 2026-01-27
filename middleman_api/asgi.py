@@ -8,11 +8,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'middleman_api.settings')
 # is populated before importing code that may import ORM models.
 django_asgi_app = get_asgi_application()
 
-from agreement.routing import websocket_urlpatterns
+from agreement.routing import websocket_urlpatterns as agreement_patterns
+from wager.routing import websocket_urlpatterns as wager_patterns
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": URLRouter(
-        websocket_urlpatterns
+        agreement_patterns + wager_patterns
     ),
 })

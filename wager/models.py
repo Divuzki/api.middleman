@@ -75,3 +75,25 @@ class Wager(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.id})"
+
+
+class ChatMessage(models.Model):
+    id = models.CharField(max_length=50, primary_key=True, editable=False)
+    wager = models.ForeignKey(Wager, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE,
+        db_constraint=False,
+        related_name='wager_messages'
+    )
+    text = models.TextField()
+    message_type = models.CharField(max_length=20, default='text')
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            self.id = f"m_{uuid.uuid4().hex[:8]}"
+        super().save(*args, **kwargs)
+
+    class Meta:
+        ordering = ['timestamp']

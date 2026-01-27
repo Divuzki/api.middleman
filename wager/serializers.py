@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from .models import Wager
+from .models import Wager, ChatMessage
 
 User = get_user_model()
 
@@ -40,3 +40,19 @@ class WagerSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Creator is set in the view perform_create
         return super().create(validated_data)
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    senderId = serializers.CharField(source='sender.id', read_only=True)
+    senderName = serializers.SerializerMethodField()
+    type = serializers.CharField(source='message_type', read_only=True)
+
+    class Meta:
+        model = ChatMessage
+        fields = ['id', 'senderId', 'senderName', 'text', 'type', 'timestamp']
+        read_only_fields = ['id', 'senderId', 'senderName', 'type', 'timestamp']
+
+    def get_senderName(self, obj):
+        if not obj.sender:
+            return "Unknown"
+        full_name = f"{obj.sender.first_name} {obj.sender.last_name}".strip()
+        return full_name if full_name else obj.sender.email.split('@')[0]
