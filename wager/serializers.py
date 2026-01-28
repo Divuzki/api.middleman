@@ -20,17 +20,26 @@ class WagerUserSerializer(serializers.ModelSerializer):
 class WagerSerializer(serializers.ModelSerializer):
     creator = WagerUserSerializer(read_only=True)
     opponent = WagerUserSerializer(read_only=True)
+    drawRequestedBy = serializers.SerializerMethodField()
+    
     # Write-only fields for creating, read-only for retrieval
     status = serializers.CharField(read_only=True)
     shareLink = serializers.CharField(read_only=True)
+    drawStatus = serializers.CharField(read_only=True)
     
     class Meta:
         model = Wager
         fields = [
             'id', 'mode', 'category', 'title', 'description', 'amount', 
             'endDate', 'status', 'proofMethod', 'hashtags', 
-            'creator', 'opponent', 'shareLink'
+            'creator', 'opponent', 'shareLink',
+            'drawStatus', 'drawRequestedBy'
         ]
+
+    def get_drawRequestedBy(self, obj):
+        if obj.drawRequestedBy:
+            return obj.drawRequestedBy.id
+        return None
 
     def validate_endDate(self, value):
         if value <= timezone.now():

@@ -38,6 +38,13 @@ class Wager(models.Model):
         ('Proof upload', 'Proof upload'),
     ]
 
+    DRAW_STATUS_CHOICES = [
+        ('none', 'None'),
+        ('pending', 'Pending'),
+        ('rejected', 'Rejected'),
+        ('accepted', 'Accepted'),
+    ]
+
     id = models.CharField(max_length=50, primary_key=True, editable=False)
     mode = models.CharField(max_length=20, choices=MODE_CHOICES)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
@@ -48,6 +55,17 @@ class Wager(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='OPEN')
     proofMethod = models.CharField(max_length=30, choices=PROOF_METHOD_CHOICES)
     hashtags = models.JSONField(default=list, blank=True)
+    
+    # Draw logic fields
+    drawStatus = models.CharField(max_length=20, choices=DRAW_STATUS_CHOICES, default='none')
+    drawRequestedBy = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='requested_draws',
+        db_constraint=False
+    )
     
     # Relationships
     # Note: db_constraint=False is required for cross-database relationships

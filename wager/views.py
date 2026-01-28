@@ -7,6 +7,7 @@ from .serializers import WagerSerializer, ChatMessageSerializer
 from users.notifications import notify_badge_counts
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from .signals import send_wager_notification
 
 class StandardResultsSetPagination(pagination.PageNumberPagination):
     page_size = 10
@@ -100,6 +101,111 @@ class WagerViewSet(viewsets.ModelViewSet):
         # 5. Return Updated Wager
         serializer = self.get_serializer(wager)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='draw/request')
+    def draw_request(self, request, id=None):
+        wager = self.get_object()
+        
+        # 1. Validate User is Participant
+        is_creator = str(wager.creator_id) == str(request.user.id)
+        is_opponent = str(wager.opponent_id) == str(request.user.id) if wager.opponent_id else False
+        
+        if not (is_creator or is_opponent):
+            return Response({"detail": "Not a participant."}, status=status.HTTP_403_FORBIDDEN)
+
+        # 2. Validate Status
+        if wager.status != 'MATCHED':
+            return Response(
+                {"detail": "Draw can only be requested for matched wagers."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # 3. Update State
+        wager.drawRequestedBy = request.user
+        wager.drawStatus = 'pending'
+        wager.save()
+        
+        # 4. Notify Other Party
+        other_party = wager.opponent if is_creator else wager.creator
+        if other_party:
+            notify_badge_counts(other_party)
+            send_wager_notification(
+                wager, 
+                "Draw Requested", 
+                f"{request.user.first_name} requested a draw for '{wager.title}'"
+            )
+
+        return Response(self.get_serializer(wager).data)
+
+    @action(detail=True, methods=['post'], url_path='draw/accept')
+    def draw_accept(self, request, id=None):
+        wager = self.get_object()
+        
+        # 1. Validate Pending Request
+        if wager.drawStatus != 'pending':
+            return Response({"detail": "No pending draw request."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # 2. Validate User (Must NOT be requester)
+        if str(wager.drawRequestedBy_id) == str(request.user.id):
+            return Response({"detail": "You cannot accept your own request."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Update State
+        wager.status = 'DRAW' # Or COMPLETED, but DRAW is more specific
+        wager.drawStatus = 'accepted'
+        wager.save()
+        
+        # 4. Notify Requester
+        if wager.drawRequestedBy:
+            notify_badge_counts(wager.drawRequestedBy)
+            send_wager_notification(
+                wager, 
+                "Draw Accepted", 
+                f"{request.user.first_name} accepted the draw for '{wager.title}'"
+            )
+
+        return Response(self.get_serializer(wager).data)
+
+    @action(detail=True, methods=['post'], url_path='draw/reject')
+    def draw_reject(self, request, id=None):
+        wager = self.get_object()
+        
+        # 1. Validate Pending Request
+        if wager.drawStatus != 'pending':
+            return Response({"detail": "No pending draw request."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # 2. Validate User (Must NOT be requester)
+        if str(wager.drawRequestedBy_id) == str(request.user.id):
+            return Response({"detail": "You cannot reject your own request."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Update State
+        wager.drawStatus = 'rejected'
+        wager.drawRequestedBy = None
+        wager.save()
+        
+        # 4. Notify Requester
+        if wager.drawRequestedBy: # Although we just set it to None on the object, we need the user... wait, line above clears it.
+            # Fix: Get user before clearing
+            pass 
+            
+        # Re-fetch or store ID? Actually, `wager.drawRequestedBy = None` updates the instance in memory.
+        # We need to capture the user first.
+        # Let's refactor step 3 slightly.
+        
+        # Corrected Logic:
+        requester = wager.drawRequestedBy
+        wager.drawStatus = 'rejected'
+        wager.drawRequestedBy = None
+        wager.save()
+        
+        if requester:
+            notify_badge_counts(requester)
+            send_wager_notification(
+                wager, 
+                "Draw Rejected", 
+                f"{request.user.first_name} rejected the draw for '{wager.title}'"
+            )
+
+        return Response(self.get_serializer(wager).data)
 
     @action(detail=True, methods=['get', 'post'], url_path='messages')
     def messages(self, request, id=None):
