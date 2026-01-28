@@ -70,6 +70,37 @@ class WagerViewSet(viewsets.ModelViewSet):
         if wager.opponent:
             notify_badge_counts(wager.opponent)
 
+    @action(detail=True, methods=['post'], url_path='join')
+    def join_wager(self, request, id=None):
+        wager = self.get_object()
+        
+        # 1. Validate Status
+        if wager.status != 'OPEN':
+            return Response(
+                {"detail": "This wager is no longer open."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # 2. Validate User (Cannot join own wager)
+        # Note: Checking ID string equality for cross-db safety
+        if str(wager.creator_id) == str(request.user.id):
+            return Response(
+                {"detail": "You cannot join your own wager."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Update Wager
+        wager.opponent = request.user
+        wager.status = 'MATCHED'
+        wager.save()
+        
+        # 4. Notify Creator
+        notify_badge_counts(wager.creator)
+        
+        # 5. Return Updated Wager
+        serializer = self.get_serializer(wager)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['get', 'post'], url_path='messages')
     def messages(self, request, id=None):
         wager = self.get_object()
