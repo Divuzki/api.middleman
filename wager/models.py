@@ -9,13 +9,19 @@ class Wager(models.Model):
     ]
     
     CATEGORY_CHOICES = [
+        ('Public', 'Public'),
         ('Sports', 'Sports'),
-        ('Esports', 'Esports'),
-        ('Politics', 'Politics'),
-        ('Crypto', 'Crypto'),
-        ('Stocks', 'Stocks'),
+        ('Social', 'Social'),
+        ('Skills', 'Skills'),
+        ('Predictions', 'Predictions'),
+        ('Fitness', 'Fitness'),
+        ('Work', 'Work'),
+        ('Learning', 'Learning'),
         ('Entertainment', 'Entertainment'),
-        ('Games', 'Games'),
+        ('Gaming', 'Gaming'),
+        ('Tech', 'Tech'),
+        ('Money', 'Money'),
+        ('Community', 'Community'),
         ('Others', 'Others'),
     ]
 
