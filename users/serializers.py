@@ -12,7 +12,7 @@ class AuthUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['uid', 'email', 'isIdentityVerified', 'has_set_account_pin', 'balance']
+        fields = ['uid', 'email', 'isIdentityVerified', 'has_set_account_pin', 'balance', 'is_active']
 
     def get_balance(self, obj):
         try:

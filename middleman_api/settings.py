@@ -185,20 +185,6 @@ DATABASE_ROUTERS = [
     'middleman_api.db_routers.AgreementRouter'
 ]
 
-# Debug: Log Database Configuration on Startup
-import sys
-if 'runserver' in sys.argv or 'daphne' in sys.argv or os.getenv('DYNO') or os.getenv('RAILWAY_STATIC_URL'):
-    print("--- DJANGO SETTINGS STARTUP ---")
-    print(f"WALLET_DATABASE_URL Set? {'Yes' if WALLET_DATABASE_URL else 'No'}")
-    print(f"Wallet DB Engine: {DATABASES.get('wallet_db', {}).get('ENGINE')}")
-    
-    print(f"Wager DB Engine: {DATABASES.get('wager_db', {}).get('ENGINE')}")
-    print(f"Agreement DB Engine: {DATABASES.get('agreement_db', {}).get('ENGINE')}")
-
-    
-    print("-------------------------------")
-
-
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
