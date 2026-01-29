@@ -191,6 +191,11 @@ if 'runserver' in sys.argv or 'daphne' in sys.argv or os.getenv('DYNO') or os.ge
     print("--- DJANGO SETTINGS STARTUP ---")
     print(f"WALLET_DATABASE_URL Set? {'Yes' if WALLET_DATABASE_URL else 'No'}")
     print(f"Wallet DB Engine: {DATABASES.get('wallet_db', {}).get('ENGINE')}")
+    
+    print(f"Wager DB Engine: {DATABASES.get('wager_db', {}).get('ENGINE')}")
+    print(f"Agreement DB Engine: {DATABASES.get('agreement_db', {}).get('ENGINE')}")
+
+    
     print("-------------------------------")
 
 
