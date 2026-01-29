@@ -4,7 +4,7 @@ import uuid
 
 class Wager(models.Model):
     MODE_CHOICES = [
-        ('Head-2-Head', 'Head-2-Head'),
+        # ('Head-2-Head', 'Head-2-Head'),
         ('Group', 'Group'),
     ]
     
@@ -35,7 +35,7 @@ class Wager(models.Model):
 
     PROOF_METHOD_CHOICES = [
         ('Mutual confirmation', 'Mutual confirmation'),
-        ('Proof upload', 'Proof upload'),
+        # ('Proof upload', 'Proof upload'),
     ]
 
     DRAW_STATUS_CHOICES = [

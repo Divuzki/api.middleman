@@ -65,7 +65,7 @@ class Agreement(models.Model):
     def save(self, *args, **kwargs):
         if not self.share_link:
             # Assuming a frontend URL structure
-            self.share_link = f"https://midman.app/a/{self.id}"
+            self.share_link = f"https://midman.app/agreement/{self.id}"
         super().save(*args, **kwargs)
 
     def __str__(self):
