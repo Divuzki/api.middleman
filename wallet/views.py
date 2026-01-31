@@ -109,8 +109,18 @@ class ProcessPaymentChoice(APIView):
             tx.save()
             
             client = NOWPaymentsClient()
+            # Redirect to a success page or back to app deep link
+            redirect_url = "https://midman.app/payment/callback"
+            cancel_url = "https://midman.app/payment/cancel"
+
             # NOWPayments creates an invoice and we redirect user to it
-            result = client.create_invoice(reference, tx.amount, pay_currency="usdt")
+            result = client.create_invoice(
+                reference, 
+                tx.amount, 
+                pay_currency="usdt",
+                success_url=redirect_url,
+                cancel_url=cancel_url
+            )
             if result and result.get('invoice_url'):
                 return redirect(result['invoice_url'])
         
