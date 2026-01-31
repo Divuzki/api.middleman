@@ -36,6 +36,8 @@ DEBUG = os.getenv("DEBUG", "True") == "True"
 USE_R2 = os.getenv("USE_R2", "False") == "True"
 KORAPAY_PUBLIC_KEY = os.getenv("KORAPAY_PUBLIC_KEY")
 KORAPAY_SECRET_KEY = os.getenv("KORAPAY_SECRET_KEY")
+NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
+NOWPAYMENTS_SANDBOX_MODE = os.getenv("NOWPAYMENTS_SANDBOX_MODE", "True") == "True"
 
 ALLOWED_HOSTS = ["*"]
 

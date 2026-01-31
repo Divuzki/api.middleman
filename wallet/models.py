@@ -24,6 +24,11 @@ class Transaction(models.Model):
         ('FAILED', 'Failed'),
     ]
 
+    PAYMENT_METHOD_CHOICES = [
+        ('KORAPAY', 'Korapay (Naira)'),
+        ('NOWPAYMENTS', 'NOWPayments (Crypto)'),
+    ]
+
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='transactions')
     title = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -33,6 +38,12 @@ class Transaction(models.Model):
     reference = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
     icon = models.CharField(max_length=50, blank=True, null=True) # e.g., 'savings', 'cash-outline'
+    
+    # Payment Details
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
+    payment_currency = models.CharField(max_length=10, blank=True, null=True) # e.g. 'NGN', 'USDT'
+    external_reference = models.CharField(max_length=100, blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
