@@ -1,5 +1,8 @@
 import requests
 import logging
+import json
+import hmac
+import hashlib
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -28,7 +31,7 @@ class KorapayClient:
                 "email": email
             },
             "redirect_url": redirect_url,
-            "notification_url": f"https://api.midman.app/webhooks/korapay/" # Placeholder
+            "notification_url": settings.KORAPAY_WEBHOOK_URL
         }
 
         try:
@@ -81,7 +84,7 @@ class NOWPaymentsClient:
             "order_id": order_id,
             "success_url": success_url,
             "cancel_url": cancel_url,
-            "ipn_callback_url": "https://api.midman.app/webhooks/nowpayments/" # Placeholder
+            "ipn_callback_url": settings.NOWPAYMENTS_WEBHOOK_URL
         }
 
         try:
@@ -123,3 +126,13 @@ class NOWPaymentsClient:
         except requests.RequestException as e:
             logger.error(f"NOWPayments check status error: {str(e)}")
             return None
+
+def verify_nowpayments_signature(secret_key, x_signature, message):
+    sorted_msg = json.dumps(message, separators=(',', ':'), sort_keys=True)
+    digest = hmac.new(
+        str(secret_key).encode(),
+        f'{sorted_msg}'.encode(),
+        hashlib.sha512
+    )
+    signature = digest.hexdigest()
+    return signature == x_signature

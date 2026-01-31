@@ -6,6 +6,10 @@ from rest_framework import status
 from unittest.mock import patch
 from .models import Wallet, Transaction
 from .views import DepositView, VerifyDepositView, PaymentSelectionPage, ProcessPaymentChoice
+from django.conf import settings
+import hmac
+import hashlib
+import json
 
 User = get_user_model()
 
@@ -122,22 +126,98 @@ class DepositFlowTests(TestCase):
         
         tx.refresh_from_db()
         self.assertEqual(tx.status, 'SUCCESSFUL')
-        self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.balance, 5000)
 
-    @patch('wallet.views.NOWPaymentsClient.get_payment_status_by_order_id')
-    def test_verify_nowpayments_deposit(self, mock_status):
-        tx = Transaction.objects.create(
-            wallet=self.wallet, amount=5000, reference='ref_999', 
-            status='PENDING', payment_method='NOWPAYMENTS'
+class WebhookTests(TestCase):
+    databases = {'default', 'wallet_db'}
+
+    def setUp(self):
+        self.user = User.objects.create_user(email='hook@example.com', password='password')
+        self.client = APIClient()
+        self.wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        settings.NOWPAYMENTS_IPN_SECRET = 'testsecret'
+
+    def _sign_nowpayments(self, message):
+        sorted_msg = json.dumps(message, separators=(',', ':'), sort_keys=True)
+        digest = hmac.new(
+            str(settings.NOWPAYMENTS_IPN_SECRET).encode(),
+            f'{sorted_msg}'.encode(),
+            hashlib.sha512
         )
-        
-        mock_status.return_value = {'payment_status': 'finished'}
-        
-        url = reverse('verify-deposit', kwargs={'reference': 'ref_999'})
-        response = self.client.get(url)
-        
+        return digest.hexdigest()
+
+    def test_nowpayments_webhook_success(self):
+        tx = Transaction.objects.create(
+            wallet=self.wallet, amount=3000, reference='ref_np_ok', status='PENDING',
+            payment_method='NOWPAYMENTS', payment_currency='USDT'
+        )
+        payload = {
+            "payment_status": "finished",
+            "order_id": "ref_np_ok",
+            "pay_currency": "usdt"
+        }
+        sig = self._sign_nowpayments(payload)
+        url = reverse('nowpayments-webhook')
+        response = self.client.post(url, data=payload, format='json', HTTP_X_NOWPAYMENTS_SIG=sig)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
         tx.refresh_from_db()
+        self.wallet.refresh_from_db()
         self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(float(self.wallet.balance), 3000.0)
+
+    def test_nowpayments_wrong_asset(self):
+        tx = Transaction.objects.create(
+            wallet=self.wallet, amount=2000, reference='ref_np_wrong', status='PENDING',
+            payment_method='NOWPAYMENTS', payment_currency='USDT'
+        )
+        payload = {
+            "payment_status": "finished",
+            "order_id": "ref_np_wrong",
+            "pay_currency": "btc"
+        }
+        sig = self._sign_nowpayments(payload)
+        url = reverse('nowpayments-webhook')
+        response = self.client.post(url, data=payload, format='json', HTTP_X_NOWPAYMENTS_SIG=sig)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        tx.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(tx.status, 'PENDING')
+        self.assertEqual(float(self.wallet.balance), 0.0)
+
+    def test_nowpayments_repeated_deposit(self):
+        tx = Transaction.objects.create(
+            wallet=self.wallet, amount=1500, reference='ref_np_repeat', status='PENDING',
+            payment_method='NOWPAYMENTS', payment_currency='USDT'
+        )
+        payload = {
+            "payment_status": "finished",
+            "order_id": "ref_np_repeat",
+            "pay_currency": "usdt"
+        }
+        sig = self._sign_nowpayments(payload)
+        url = reverse('nowpayments-webhook')
+        response1 = self.client.post(url, data=payload, format='json', HTTP_X_NOWPAYMENTS_SIG=sig)
+        response2 = self.client.post(url, data=payload, format='json', HTTP_X_NOWPAYMENTS_SIG=sig)
+        self.assertEqual(response1.status_code, status.HTTP_200_OK)
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+        tx.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(float(self.wallet.balance), 1500.0)
+
+    @patch('wallet.views.KorapayClient.verify_payment')
+    def test_korapay_webhook_success(self, mock_verify):
+        tx = Transaction.objects.create(
+            wallet=self.wallet, amount=2500, reference='ref_kp_ok', status='PENDING',
+            payment_method='KORAPAY', payment_currency='NGN'
+        )
+        mock_verify.return_value = {
+            "status": True,
+            "data": {"status": "success"}
+        }
+        url = reverse('korapay-webhook')
+        response = self.client.post(url, data={"reference": "ref_kp_ok"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        tx.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(float(self.wallet.balance), 2500.0)

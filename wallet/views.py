@@ -16,7 +16,8 @@ import logging
 from .models import Wallet, Transaction
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
 from users.notifications import notify_balance_update
-from .utils import KorapayClient, NOWPaymentsClient
+from .utils import KorapayClient, NOWPaymentsClient, verify_nowpayments_signature
+from django.conf import settings
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -280,3 +281,76 @@ class VerifyDepositView(GenericAPIView):
                 "currency": wallet.currency
             }
         }, status=status.HTTP_200_OK)
+
+class KorapayWebhookView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        data = request.data
+        reference = data.get('reference') or data.get('data', {}).get('reference')
+        if not reference:
+            return Response({"status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            tx = Transaction.objects.get(reference=reference)
+        except Transaction.DoesNotExist:
+            return Response({"status": "error"}, status=status.HTTP_404_NOT_FOUND)
+        if tx.status == 'SUCCESSFUL':
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
+        client = KorapayClient()
+        verification = client.verify_payment(reference)
+        success = False
+        if verification and verification.get('status') and verification.get('data', {}).get('status') == 'success':
+            success = True
+        if success:
+            wallet = Wallet.objects.get(id=tx.wallet_id)
+            try:
+                with transaction.atomic(using='wallet_db'):
+                    wallet.refresh_from_db()
+                    wallet.balance += tx.amount
+                    wallet.save()
+                    tx.status = 'SUCCESSFUL'
+                    tx.save()
+                user = User.objects.get(id=wallet.user_id)
+                notify_balance_update(user)
+            except Exception:
+                return Response({"status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"status": "success"}, status=status.HTTP_200_OK)
+
+class NOWPaymentsWebhookView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        x_signature = request.headers.get('x-nowpayments-sig')
+        secret_key = settings.NOWPAYMENTS_IPN_SECRET
+        data = request.data
+        if not x_signature or not secret_key:
+            return Response({"status": "invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+        if not verify_nowpayments_signature(secret_key, x_signature, data):
+            return Response({"status": "invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+        order_id = data.get('order_id')
+        payment_status = data.get('payment_status')
+        pay_currency = data.get('pay_currency')
+        if not order_id:
+            return Response({"status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            tx = Transaction.objects.get(reference=order_id)
+        except Transaction.DoesNotExist:
+            return Response({"status": "error"}, status=status.HTTP_404_NOT_FOUND)
+        if tx.status == 'SUCCESSFUL':
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
+        if tx.payment_currency and pay_currency and tx.payment_currency.lower() != pay_currency.lower():
+            return Response({"status": "pending"}, status=status.HTTP_200_OK)
+        if payment_status in ['finished', 'confirmed', 'sending']:
+            wallet = Wallet.objects.get(id=tx.wallet_id)
+            try:
+                with transaction.atomic(using='wallet_db'):
+                    wallet.refresh_from_db()
+                    wallet.balance += tx.amount
+                    wallet.save()
+                    tx.status = 'SUCCESSFUL'
+                    tx.save()
+                user = User.objects.get(id=wallet.user_id)
+                notify_balance_update(user)
+            except Exception:
+                return Response({"status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"status": "success"}, status=status.HTTP_200_OK)

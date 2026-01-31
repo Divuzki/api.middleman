@@ -38,6 +38,9 @@ KORAPAY_PUBLIC_KEY = os.getenv("KORAPAY_PUBLIC_KEY")
 KORAPAY_SECRET_KEY = os.getenv("KORAPAY_SECRET_KEY")
 NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 NOWPAYMENTS_SANDBOX_MODE = os.getenv("NOWPAYMENTS_SANDBOX_MODE", "True") == "True"
+NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
+KORAPAY_WEBHOOK_URL = os.getenv("KORAPAY_WEBHOOK_URL", "https://api.midman.app/webhooks/korapay/")
+NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midman.app/webhooks/nowpayments/")
 
 ALLOWED_HOSTS = ["*"]
 
