@@ -32,3 +32,34 @@ def send_welcome_email(user):
         # Log the error in a real production environment
         print(f"Failed to send welcome email to {user.email}: {str(e)}")
         return False
+
+def send_otp_email(user, otp):
+    """
+    Sends an OTP email for PIN change.
+    """
+    subject = "Your Verification Code"
+    from_email = settings.DEFAULT_FROM_EMAIL
+    to = [user.email]
+
+    # Simple text content for now, ideally use a template
+    text_content = f"Your verification code is: {otp}. It expires in 10 minutes."
+    
+    # HTML content
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2>Verification Code</h2>
+        <p>Use the code below to authorize your request:</p>
+        <h1 style="color: #4CAF50; letter-spacing: 5px;">{otp}</h1>
+        <p>This code expires in 10 minutes.</p>
+        <p>If you did not request this, please ignore this email.</p>
+    </div>
+    """
+
+    try:
+        msg = EmailMultiAlternatives(subject, text_content, from_email, to)
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+        return True
+    except Exception as e:
+        print(f"Failed to send OTP email to {user.email}: {str(e)}")
+        return False

@@ -73,11 +73,15 @@ class IdentityStatusSerializer(serializers.ModelSerializer):
 
 class SetAccountPinSerializer(serializers.Serializer):
     pin = serializers.CharField(min_length=4, max_length=4)
+    otp = serializers.CharField(required=False, min_length=6, max_length=6)
 
     def validate_pin(self, value):
         if not value.isdigit():
             raise serializers.ValidationError("PIN must contain only digits.")
         return value
+
+class OTPVerifySerializer(serializers.Serializer):
+    otp = serializers.CharField(min_length=6, max_length=6)
 
 class DeviceProfileSerializer(serializers.ModelSerializer):
     device_uuid = serializers.CharField(max_length=255)

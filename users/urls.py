@@ -4,7 +4,7 @@ from .views import (
     BankListView, PayoutAccountListCreateView, PayoutAccountDeleteView,
     VerifyBankAccountView, IdentityVerificationView, IdentityStatusView,
     SetAccountPinView, DeviceListCreateView, DeviceDetailView,
-    UserActivitiesView
+    UserActivitiesView, RequestPinChangeOTPView, VerifyPinChangeOTPView
 )
 
 urlpatterns = [
@@ -18,6 +18,8 @@ urlpatterns = [
     re_path(r'^user/verify-identity/?$', IdentityVerificationView.as_view(), name='verify-identity'),
     re_path(r'^user/identity-status/?$', IdentityStatusView.as_view(), name='identity-status'),
     re_path(r'^user/pin/?$', SetAccountPinView.as_view(), name='set-account-pin'),
+    re_path(r'^user/pin/change/request/?$', RequestPinChangeOTPView.as_view(), name='request-pin-change-otp'),
+    re_path(r'^user/pin/change/verify/?$', VerifyPinChangeOTPView.as_view(), name='verify-pin-change-otp'),
     re_path(r'^user/devices/?$', DeviceListCreateView.as_view(), name='device-list-create'),
     re_path(r'^user/devices/(?P<device_uuid>[0-9a-f-]+)/?$', DeviceDetailView.as_view(), name='device-detail'),
     re_path(r'^activities/?$', UserActivitiesView.as_view(), name='user-activities'),
