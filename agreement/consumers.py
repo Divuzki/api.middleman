@@ -356,6 +356,10 @@ class AgreementConsumer(AsyncWebsocketConsumer):
 
     # DB Helpers
     @database_sync_to_async
+    def get_converted_amounts_async(self, amount, currency):
+        return get_converted_amounts(amount, currency)
+
+    @database_sync_to_async
     def get_agreement_participant_ids(self, agreement_id):
         try:
             agreement = Agreement.objects.get(id=agreement_id)
