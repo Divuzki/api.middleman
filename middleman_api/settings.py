@@ -346,6 +346,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost",
     "http://localhost:8100",
     "capacitor://localhost",
+    "midman://",
+    "https://midman.app"
 ]
 
 EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
