@@ -10,6 +10,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from wallet.models import Wallet, Transaction
 from users.notifications import notify_balance_update, notify_badge_counts
+from .services import AgreementService
 import uuid
 
 class AgreementViewSet(viewsets.ModelViewSet):
@@ -29,20 +30,13 @@ class AgreementViewSet(viewsets.ModelViewSet):
         timeline = self.request.data.get('timeline')
         
         if creator_role == 'seller' and amount and timeline:
-            # Create initial offer
-            offer = AgreementOffer.objects.create(
+            # Create initial offer via service
+            AgreementService.create_offer(
+                user=self.request.user,
                 agreement=agreement,
                 amount=amount,
-                description="Initial offer from seller", # Default description or could be passed
-                timeline=timeline,
-                status='pending'
-            )
-            # Create offer message
-            ChatMessage.objects.create(
-                agreement=agreement,
-                sender=self.request.user,
-                message_type='offer',
-                offer=offer
+                description="Initial offer from seller",
+                timeline=timeline
             )
             # IMPORTANT: We need to ensure the serialized response includes this new offer.
             # The viewset's create method calls get_serializer(instance) AFTER perform_create.
@@ -108,83 +102,23 @@ class AgreementViewSet(viewsets.ModelViewSet):
 
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
-        is_buyer = user == agreement.buyer
-        is_seller = user == agreement.seller
+        try:
+            agreement, offer = AgreementService.accept_offer(user, agreement, offer, pin)
+        except ValueError as e:
+             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+             return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-        if not (is_buyer or is_seller):
-             return Response({"error": "Not a participant"}, status=status.HTTP_403_FORBIDDEN)
-
-        if is_buyer:
-            # Buyer accepting an offer (from seller, or their own counter-offer accepted by seller?)
-            # Logic says: "If Buyer accepts... immediately funds"
-            # Need PIN verification
-            if not pin:
-                 return Response({"error": "PIN required for buyer to accept/fund"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Verify PIN
-            if user.transaction_pin and user.transaction_pin != pin:
-                 return Response({"error": "Incorrect PIN"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Escrow Logic: Lock Funds
-            try:
-                # Get Buyer's Wallet
-                buyer_wallet = Wallet.objects.get(user_id=user.id)
-                
-                if buyer_wallet.balance < offer.amount:
-                    return Response({"error": "Insufficient funds in wallet"}, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Debit Wallet
-                buyer_wallet.balance -= offer.amount
-                buyer_wallet.save()
-                
-                # Create Transaction Record
-                Transaction.objects.create(
-                    wallet=buyer_wallet,
-                    title=f"Escrow Lock: {agreement.title}",
-                    amount=offer.amount,
-                    transaction_type='TRANSFER',
-                    category='Escrow Lock',
-                    status='SUCCESSFUL',
-                    reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                    description=f"Funds locked for agreement {agreement.id}"
-                )
-                
-            except Wallet.DoesNotExist:
-                return Response({"error": "Buyer wallet not found"}, status=status.HTTP_404_NOT_FOUND)
-            except Exception as e:
-                return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            agreement.amount = offer.amount
-            agreement.timeline = offer.timeline
-            agreement.status = 'active'
-            agreement.secured_at = timezone.now()
-            agreement.active_offer = offer
-            agreement.save()
-            
-            offer.status = 'accepted'
-            offer.save()
-            
-            # Notify via WebSocket
-            self._notify_agreement_update(agreement)
-            self._notify_offer_update(offer)
-            
-            # Balance Update for Buyer
+        # Notify via WebSocket
+        self._notify_agreement_update(agreement)
+        self._notify_offer_update(offer)
+        
+        # Balance Update for Buyer
+        if user == agreement.buyer:
             notify_balance_update(user)
-            # Badge Counts
-            notify_badge_counts(user)
-            notify_badge_counts(agreement.seller)
-            
-        elif is_seller:
-            # Seller accepting an offer (presumably from buyer)
-            offer.status = 'accepted_by_seller'
-            offer.save()
-            self._notify_offer_update(offer)
-            # Agreement status doesn't change here, but maybe last message/activity update?
-            # Let's notify agreement update just in case user list needs refresh
-            self._notify_agreement_update(agreement)
-            
-            notify_badge_counts(agreement.buyer)
-            notify_badge_counts(user)
+        # Badge Counts
+        notify_badge_counts(agreement.buyer)
+        notify_badge_counts(agreement.seller)
 
         return Response(self.get_serializer(agreement).data)
 
@@ -198,12 +132,10 @@ class AgreementViewSet(viewsets.ModelViewSet):
 
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
-        # Ensure user is participant
-        if request.user not in [agreement.initiator, agreement.counterparty, agreement.buyer, agreement.seller]:
-             return Response({"error": "Not a participant"}, status=status.HTTP_403_FORBIDDEN)
-
-        offer.status = 'rejected'
-        offer.save()
+        try:
+            offer = AgreementService.reject_offer(request.user, agreement, offer)
+        except ValueError as e:
+             return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
         
         self._notify_offer_update(offer)
         self._notify_agreement_update(agreement) # Update last message/status if needed
@@ -213,21 +145,16 @@ class AgreementViewSet(viewsets.ModelViewSet):
         
         return Response(self.get_serializer(agreement).data)
 
-    @action(detail=True, methods=['post'], url_path='complete')
-    def complete_agreement(self, request, pk=None):
+    @action(detail=True, methods=['post'], url_path='deliver')
+    def deliver_agreement(self, request, pk=None):
         agreement = self.get_object()
-        user = request.user
+        proof = request.data.get('proof', [])
         
-        if agreement.seller != user:
-            return Response({"error": "Only seller can complete agreement"}, status=status.HTTP_403_FORBIDDEN)
-            
-        if agreement.status not in ['active', 'secured']: # Allow secured for backward compat if needed
-             return Response({"error": "Agreement must be active to complete"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Update status to delivered
-        agreement.status = 'delivered'
-        agreement.delivered_at = timezone.now()
-        agreement.save()
+        try:
+            agreement = AgreementService.deliver_agreement(request.user, agreement, proof)
+        except ValueError as e:
+             status_code = status.HTTP_403_FORBIDDEN if "Only seller" in str(e) else status.HTTP_400_BAD_REQUEST
+             return Response({"error": str(e)}, status=status_code)
         
         self._notify_agreement_update(agreement)
         
@@ -359,15 +286,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
 
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
-        agreement.amount = offer.amount
-        agreement.timeline = offer.timeline
-        agreement.status = 'terms_locked'
-        agreement.terms_locked_at = timezone.now()
-        agreement.save()
-        
-        # Update offer status? The docs don't say, but usually yes.
-        offer.status = 'accepted'
-        offer.save()
+        agreement = AgreementService.lock_terms(agreement, offer)
         
         self._notify_agreement_update(agreement)
         self._notify_offer_update(offer)
@@ -389,65 +308,18 @@ class AgreementViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(agreement).data)
 
-    @action(detail=True, methods=['post'], url_path='deliver')
-    def deliver_agreement(self, request, pk=None):
-        agreement = self.get_object()
-        proof = request.data.get('proof', [])
-        
-        if not isinstance(proof, list):
-             return Response({"error": "proof must be a list of URLs"}, status=status.HTTP_400_BAD_REQUEST)
-
-        agreement.delivery_proof = proof
-        agreement.status = 'delivered'
-        agreement.delivered_at = timezone.now()
-        agreement.save()
-        
-        self._notify_agreement_update(agreement)
-        
-        return Response(self.get_serializer(agreement).data)
-
     @action(detail=True, methods=['post'], url_path='confirm')
     def confirm_agreement(self, request, pk=None):
         agreement = self.get_object()
-        user = request.user
-
-        if agreement.buyer != user:
-            return Response({"error": "Only buyer can confirm agreement"}, status=status.HTTP_403_FORBIDDEN)
         
-        if agreement.status != 'delivered':
-             return Response({"error": "Agreement must be delivered to confirm"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Escrow Logic: Release Funds to Seller
         try:
-            seller_wallet = Wallet.objects.get(user_id=agreement.seller.id)
-            
-            # Credit Wallet
-            seller_wallet.balance += agreement.amount
-            seller_wallet.save()
-            
-            # Create Transaction Record
-            Transaction.objects.create(
-                wallet=seller_wallet,
-                title=f"Escrow Release: {agreement.title}",
-                amount=agreement.amount,
-                transaction_type='TRANSFER',
-                category='Escrow Release',
-                status='SUCCESSFUL',
-                reference=f"escrow_release_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Funds released for agreement {agreement.id}"
-            )
-            
-        except Wallet.DoesNotExist:
-            # This is critical - seller needs a wallet. Log error but maybe don't fail confirmation?
-            # Or fail and ask support? For now, let's fail to ensure integrity.
-            return Response({"error": "Seller wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+            agreement = AgreementService.confirm_agreement(request.user, agreement)
+        except ValueError as e:
+            status_code = status.HTTP_403_FORBIDDEN if "Only buyer" in str(e) else status.HTTP_400_BAD_REQUEST
+            return Response({"error": str(e)}, status=status_code)
         except Exception as e:
-            return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        agreement.status = 'completed'
-        agreement.completed_at = timezone.now()
-        agreement.save()
-        
         self._notify_agreement_update(agreement)
 
         notify_balance_update(agreement.seller) # Funds released
@@ -490,20 +362,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         if not all([amount, description, timeline]):
             return Response({"error": "amount, description, and timeline are required"}, status=status.HTTP_400_BAD_REQUEST)
             
-        offer = AgreementOffer.objects.create(
-            agreement=agreement,
-            amount=amount,
-            description=description,
-            timeline=timeline,
-            status='pending'
-        )
-        
-        message = ChatMessage.objects.create(
-            agreement=agreement,
-            sender=request.user,
-            message_type='offer',
-            offer=offer
-        )
+        offer, message = AgreementService.create_offer(request.user, agreement, amount, description, timeline)
         
         self._notify_offer_created(message)
         self._notify_agreement_update(agreement, last_message=f"Offer: {amount}")

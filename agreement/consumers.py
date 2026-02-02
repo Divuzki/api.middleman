@@ -10,6 +10,7 @@ from .serializers import ChatMessageSerializer, AgreementSerializer
 from wallet.models import Wallet, Transaction
 from users.models import DeviceProfile
 from users.notifications import get_balance_data, get_badge_counts_data
+from .services import AgreementService
 import logging
 import uuid
 
@@ -454,19 +455,8 @@ class AgreementConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def save_offer(self, user, agreement_id, amount, description, timeline):
         agreement = Agreement.objects.get(id=agreement_id)
-        offer = AgreementOffer.objects.create(
-            agreement=agreement,
-            amount=amount,
-            description=description,
-            timeline=timeline,
-            status='pending'
-        )
-        return ChatMessage.objects.create(
-            agreement=agreement,
-            sender=user,
-            message_type='offer',
-            offer=offer
-        )
+        offer, message = AgreementService.create_offer(user, agreement, amount, description, timeline)
+        return message
 
     @database_sync_to_async
     def serialize_message(self, message):
@@ -478,54 +468,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             agreement = Agreement.objects.get(id=agreement_id)
             offer = AgreementOffer.objects.get(id=offer_id, agreement=agreement)
             
-            is_buyer = user == agreement.buyer
-            is_seller = user == agreement.seller
-            
-            if not (is_buyer or is_seller):
-                return {'success': False, 'error': 'Not a participant'}
-
-            if is_buyer:
-                if not pin:
-                    return {'success': False, 'error': 'PIN required'}
-                if user.transaction_pin and user.transaction_pin != pin:
-                    return {'success': False, 'error': 'Incorrect PIN'}
-                
-                # Wallet Logic
-                try:
-                    buyer_wallet = Wallet.objects.get(user_id=user.id)
-                    if buyer_wallet.balance < offer.amount:
-                        return {'success': False, 'error': 'Insufficient funds'}
-                    
-                    buyer_wallet.balance -= offer.amount
-                    buyer_wallet.save()
-                    
-                    Transaction.objects.create(
-                        wallet=buyer_wallet,
-                        title=f"Escrow Lock: {agreement.title}",
-                        amount=offer.amount,
-                        transaction_type='TRANSFER',
-                        category='Escrow Lock',
-                        status='SUCCESSFUL',
-                        reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                        description=f"Funds locked for agreement {agreement.id}"
-                    )
-                except Wallet.DoesNotExist:
-                    return {'success': False, 'error': 'Wallet not found'}
-                
-                agreement.amount = offer.amount
-                agreement.timeline = offer.timeline
-                agreement.status = 'active'
-                agreement.secured_at = timezone.now()
-                agreement.active_offer = offer
-                agreement.save()
-                
-                offer.status = 'accepted'
-                offer.save()
-                
-            elif is_seller:
-                offer.status = 'accepted_by_seller'
-                offer.save()
-
+            agreement, offer = AgreementService.accept_offer(user, agreement, offer, pin)
             return {'success': True, 'agreement': agreement, 'offer': offer}
         except Exception as e:
             logger.error(f"Error processing offer acceptance: {e}")
@@ -537,9 +480,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             agreement = Agreement.objects.get(id=agreement_id)
             offer = AgreementOffer.objects.get(id=offer_id, agreement=agreement)
             
-            offer.status = 'rejected'
-            offer.save()
-            
+            offer = AgreementService.reject_offer(user, agreement, offer)
             return {'success': True, 'offer': offer}
         except Exception as e:
             logger.error(f"Error rejecting offer: {e}")
@@ -549,35 +490,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
     def process_agreement_confirmation(self, user, agreement_id):
         try:
             agreement = Agreement.objects.get(id=agreement_id)
-            
-            if agreement.buyer != user:
-                return {'success': False, 'error': 'Only buyer can confirm'}
-            
-            if agreement.status != 'delivered':
-                 return {'success': False, 'error': 'Not delivered yet'}
-
-            try:
-                seller_wallet = Wallet.objects.get(user_id=agreement.seller.id)
-                seller_wallet.balance += agreement.amount
-                seller_wallet.save()
-                
-                Transaction.objects.create(
-                    wallet=seller_wallet,
-                    title=f"Escrow Release: {agreement.title}",
-                    amount=agreement.amount,
-                    transaction_type='TRANSFER',
-                    category='Escrow Release',
-                    status='SUCCESSFUL',
-                    reference=f"escrow_release_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                    description=f"Funds released for agreement {agreement.id}"
-                )
-            except Wallet.DoesNotExist:
-                return {'success': False, 'error': 'Seller wallet not found'}
-
-            agreement.status = 'completed'
-            agreement.completed_at = timezone.now()
-            agreement.save()
-            
+            agreement = AgreementService.confirm_agreement(user, agreement)
             return {'success': True, 'agreement': agreement}
         except Exception as e:
             logger.error(f"Error confirming agreement: {e}")
