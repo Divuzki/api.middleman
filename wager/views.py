@@ -178,25 +178,12 @@ class WagerViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You cannot reject your own request."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Update State
-        wager.drawStatus = 'rejected'
-        wager.drawRequestedBy = None
-        wager.save()
-        
-        # 4. Notify Requester
-        if wager.drawRequestedBy: # Although we just set it to None on the object, we need the user... wait, line above clears it.
-            # Fix: Get user before clearing
-            pass 
-            
-        # Re-fetch or store ID? Actually, `wager.drawRequestedBy = None` updates the instance in memory.
-        # We need to capture the user first.
-        # Let's refactor step 3 slightly.
-        
-        # Corrected Logic:
         requester = wager.drawRequestedBy
         wager.drawStatus = 'rejected'
         wager.drawRequestedBy = None
         wager.save()
         
+        # 4. Notify Requester
         if requester:
             notify_badge_counts(requester)
             send_wager_notification(

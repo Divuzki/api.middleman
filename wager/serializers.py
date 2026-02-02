@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Wager, ChatMessage
+from middleman_api.utils import get_converted_amounts
 
 User = get_user_model()
 

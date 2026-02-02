@@ -52,17 +52,25 @@ class AgreementSerializer(serializers.ModelSerializer):
     date = serializers.DateTimeField(source='created_at', read_only=True)
     deliveryProof = serializers.JSONField(source='delivery_proof', read_only=True)
     initialOffer = serializers.SerializerMethodField()
+    amount_usd = serializers.SerializerMethodField()
+    amount_ngn = serializers.SerializerMethodField()
 
     class Meta:
         model = Agreement
         fields = [
-            'id', 'title', 'description', 'amount', 'currency', 'status', 
+            'id', 'title', 'description', 'amount', 'amount_usd', 'amount_ngn', 'currency', 'status', 
             'timeline', 'initiator', 'counterparty', 'buyerId', 'sellerId', 
             'creatorRole', 'terms', 'shareLink', 'date', 
             'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt', 'deliveryProof',
             'initialOffer', 'activeOfferId'
         ]
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
+
+    def get_amount_usd(self, obj):
+        return get_converted_amounts(obj.amount, obj.currency)['amount_usd']
+
+    def get_amount_ngn(self, obj):
+        return get_converted_amounts(obj.amount, obj.currency)['amount_ngn']
 
     def get_initialOffer(self, obj):
         # Return the first offer if it exists (usually created by seller on init)

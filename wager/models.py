@@ -51,6 +51,7 @@ class Wager(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
     amount = models.IntegerField()  # Assuming amount in smallest currency unit or points
+    currency = models.CharField(max_length=10, default='NGN')
     endDate = models.DateTimeField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='OPEN')
     proofMethod = models.CharField(max_length=30, choices=PROOF_METHOD_CHOICES)

@@ -328,6 +328,13 @@ class AgreementViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(agreement).data)
 
+    @action(detail=True, methods=['post'], url_path='complete')
+    def complete_agreement(self, request, pk=None):
+        """
+        Alias for confirm_agreement to support frontend clients calling /complete/
+        """
+        return self.confirm_agreement(request, pk)
+
     @action(detail=True, methods=['get', 'post'], url_path='messages')
     def messages(self, request, pk=None):
         agreement = self.get_object()
@@ -348,7 +355,9 @@ class AgreementViewSet(viewsets.ModelViewSet):
                 text=text,
                 message_type='text'
             )
-            # Logic to notify counterparty would go here (e.g., via Channels)
+            
+            self._notify_chat_message(message)
+            
             return Response(ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='offers')
