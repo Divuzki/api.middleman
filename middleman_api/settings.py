@@ -392,7 +392,7 @@ else:
     print("Warning: FIREBASE_CREDENTIALS_PATH not set. Firebase Admin not initialized.")
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True if DEBUG else False
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 if not CORS_ALLOW_ALL_ORIGINS:
