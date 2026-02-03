@@ -29,10 +29,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-^n$tzx$-iumpm+q#5ajp(t1%$*y%*^8o98+5dfdk_^9-syq7h&'
+SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-default-dev-key-change-in-prod")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "True") == "True"
+DEBUG = os.getenv("DEBUG", "False") == "True"
+
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+
 USE_R2 = os.getenv("USE_R2", "False") == "True"
 KORAPAY_PUBLIC_KEY = os.getenv("KORAPAY_PUBLIC_KEY")
 KORAPAY_SECRET_KEY = os.getenv("KORAPAY_SECRET_KEY")
@@ -42,7 +45,59 @@ NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
 KORAPAY_WEBHOOK_URL = os.getenv("KORAPAY_WEBHOOK_URL", "https://api.midman.app/webhooks/korapay/")
 NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midman.app/webhooks/nowpayments/")
 
-ALLOWED_HOSTS = ["*"]
+
+# Production Security Settings
+if not DEBUG:
+    # Security Middleware settings
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    
+    # Logging Configuration
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'verbose': {
+                'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+                'style': '{',
+            },
+            'simple': {
+                'format': '{levelname} {message}',
+                'style': '{',
+            },
+        },
+        'handlers': {
+            'console': {
+                'level': 'INFO',
+                'class': 'logging.StreamHandler',
+                'formatter': 'verbose',
+            },
+        },
+        'loggers': {
+            'django': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
+            'users': {  # Add logger for our users app
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
+        },
+    }
+
+# Disable strict security during tests to avoid 301 redirects and cookie issues
+import sys
+if 'test' in sys.argv:
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    SECURE_HSTS_SECONDS = 0
 
 
 # Application definition
@@ -339,6 +394,19 @@ else:
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True if DEBUG else False
 CORS_ALLOW_CREDENTIALS = True
+
+if not CORS_ALLOW_ALL_ORIGINS:
+    # In production, we must specify allowed origins
+    env_cors = os.getenv("CORS_ALLOWED_ORIGINS")
+    if env_cors:
+        CORS_ALLOWED_ORIGINS = env_cors.split(",")
+    else:
+        # Fallback defaults for production
+        CORS_ALLOWED_ORIGINS = [
+            "https://midman.app",
+            "https://api.midman.app",
+            "capacitor://localhost",
+        ]
 
 CSRF_TRUSTED_ORIGINS = [
     "https://api.midman.app",

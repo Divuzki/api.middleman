@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Agreement, AgreementOffer, ChatMessage
 from django.contrib.auth import get_user_model
+from middleman_api.utils import get_converted_amounts
 
 User = get_user_model()
 

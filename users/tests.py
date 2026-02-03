@@ -8,6 +8,8 @@ from rest_framework.exceptions import AuthenticationFailed
 User = get_user_model()
 
 class AuthenticationTests(TestCase):
+    databases = '__all__'
+
     def setUp(self):
         self.client = APIClient()
         self.auth_url = '/auth/'
@@ -26,7 +28,7 @@ class AuthenticationTests(TestCase):
         token = 'valid_firebase_token'
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
         
-        response = self.client.post(self.auth_url)
+        response = self.client.get(self.auth_url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['email'], self.user_data['email'])
@@ -54,7 +56,7 @@ class AuthenticationTests(TestCase):
         token = 'valid_firebase_token'
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
         
-        response = self.client.post(self.auth_url)
+        response = self.client.get(self.auth_url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -73,14 +75,14 @@ class AuthenticationTests(TestCase):
         token = 'invalid_token'
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
         
-        response = self.client.post(self.auth_url)
+        response = self.client.get(self.auth_url)
         
         # DRF returns 403 Forbidden for AuthenticationFailed usually, or 401 if configured
         self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
 
     def test_authentication_missing_token(self):
         """Test request without token returns 401/403."""
-        response = self.client.post(self.auth_url)
+        response = self.client.get(self.auth_url)
         self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
 
     @patch('users.authentication.auth.verify_id_token')
@@ -91,10 +93,12 @@ class AuthenticationTests(TestCase):
         token = 'valid_token_no_email'
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
         
-        response = self.client.post(self.auth_url)
+        response = self.client.get(self.auth_url)
         self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
 
 class PerformanceTests(TestCase):
+    databases = '__all__'
+
     def setUp(self):
         self.client = APIClient()
         self.auth_url = '/auth/'
@@ -114,7 +118,7 @@ class PerformanceTests(TestCase):
         
         # Run 100 requests
         for _ in range(100):
-            response = self.client.post(self.auth_url)
+            response = self.client.get(self.auth_url)
             self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # Ensure only 1 user created

@@ -2,6 +2,9 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
 from django.utils.html import strip_tags
+import logging
+
+logger = logging.getLogger(__name__)
 
 def send_welcome_email(user):
     """
@@ -30,7 +33,7 @@ def send_welcome_email(user):
         return True
     except Exception as e:
         # Log the error in a real production environment
-        print(f"Failed to send welcome email to {user.email}: {str(e)}")
+        logger.error(f"Failed to send welcome email to {user.email}: {str(e)}", exc_info=True)
         return False
 
 def send_otp_email(user, otp):
@@ -61,5 +64,5 @@ def send_otp_email(user, otp):
         msg.send()
         return True
     except Exception as e:
-        print(f"Failed to send OTP email to {user.email}: {str(e)}")
+        logger.error(f"Failed to send OTP email to {user.email}: {str(e)}", exc_info=True)
         return False
