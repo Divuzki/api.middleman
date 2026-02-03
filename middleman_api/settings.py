@@ -406,8 +406,6 @@ if not CORS_ALLOW_ALL_ORIGINS:
             "https://midman.app",
             "https://api.midman.app",
             "capacitor://localhost",
-            "https://localhost",
-            "midman://"
         ]
 
 CSRF_TRUSTED_ORIGINS = [
