@@ -31,8 +31,8 @@ class AuthenticationTests(TestCase):
         response = self.client.get(self.auth_url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['email'], self.user_data['email'])
-        self.assertEqual(response.data['firebase_uid'], self.user_data['uid'])
+        self.assertEqual(response.data['user']['email'], self.user_data['email'])
+        self.assertEqual(response.data['user']['uid'], self.user_data['uid'])
         
         # Verify user was created in DB
         user = User.objects.get(email=self.user_data['email'])
