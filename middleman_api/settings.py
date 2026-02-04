@@ -32,7 +32,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-default-dev-key-change-in-prod")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "False") == "True"
+DEBUG = os.getenv("DEBUG", "True") == "True"
 
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
 
@@ -49,12 +49,12 @@ NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midm
 # Production Security Settings
 if not DEBUG:
     # Security Middleware settings
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "True") == "True"
+    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True") == "True"
+    CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True") == "True"
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", 31536000))  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "True") == "True"
+    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "True") == "True"
     
     # Logging Configuration
     LOGGING = {
@@ -140,7 +140,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-APPEND_SLASH = True
+# APPEND_SLASH = True
 
 ROOT_URLCONF = 'middleman_api.urls'
 
@@ -392,7 +392,7 @@ else:
     print("Warning: FIREBASE_CREDENTIALS_PATH not set. Firebase Admin not initialized.")
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = True  # Relaxing for development
 CORS_ALLOW_CREDENTIALS = True
 
 if not CORS_ALLOW_ALL_ORIGINS:
@@ -406,6 +406,8 @@ if not CORS_ALLOW_ALL_ORIGINS:
             "https://midman.app",
             "https://api.midman.app",
             "capacitor://localhost",
+            "http://localhost",
+            "http://localhost:8100",
         ]
 
 CSRF_TRUSTED_ORIGINS = [

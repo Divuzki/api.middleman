@@ -4,7 +4,7 @@ import uuid
 
 class Wager(models.Model):
     MODE_CHOICES = [
-        # ('Head-2-Head', 'Head-2-Head'),
+        ('Head-2-Head', 'Head-2-Head'),
         ('Group', 'Group'),
     ]
     
@@ -35,7 +35,7 @@ class Wager(models.Model):
 
     PROOF_METHOD_CHOICES = [
         ('Mutual confirmation', 'Mutual confirmation'),
-        # ('Proof upload', 'Proof upload'),
+        ('Proof upload', 'Proof upload'),
     ]
 
     DRAW_STATUS_CHOICES = [
@@ -50,8 +50,13 @@ class Wager(models.Model):
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
     title = models.CharField(max_length=255)
     description = models.TextField()
-    amount = models.IntegerField()  # Assuming amount in smallest currency unit or points
+    
+    # Currency Fields
+    amount = models.DecimalField(max_digits=20, decimal_places=2)  # Stake amount
     currency = models.CharField(max_length=10, default='NGN')
+    amount_ngn = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    amount_usd = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    
     endDate = models.DateTimeField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='OPEN')
     proofMethod = models.CharField(max_length=30, choices=PROOF_METHOD_CHOICES)

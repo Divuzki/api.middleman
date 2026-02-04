@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Wager, ChatMessage
 from middleman_api.utils import get_converted_amounts
+from decimal import Decimal
 
 User = get_user_model()
 
@@ -28,10 +29,16 @@ class WagerSerializer(serializers.ModelSerializer):
     shareLink = serializers.CharField(read_only=True)
     drawStatus = serializers.CharField(read_only=True)
     
+    # Currency
+    currency = serializers.CharField(default='NGN')
+    amount_ngn = serializers.DecimalField(max_digits=20, decimal_places=2, required=False)
+    amount_usd = serializers.DecimalField(max_digits=20, decimal_places=2, required=False)
+    
     class Meta:
         model = Wager
         fields = [
             'id', 'mode', 'category', 'title', 'description', 'amount', 
+            'currency', 'amount_ngn', 'amount_usd',
             'endDate', 'status', 'proofMethod', 'hashtags', 
             'creator', 'opponent', 'shareLink',
             'drawStatus', 'drawRequestedBy'
@@ -48,6 +55,18 @@ class WagerSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        amount = validated_data.get('amount')
+        currency = validated_data.get('currency', 'NGN')
+        amount_ngn = validated_data.get('amount_ngn')
+        amount_usd = validated_data.get('amount_usd')
+
+        # Logic: If both NGN and USD are provided, trust them (or re-verify if strict).
+        # If missing, calculate using helper.
+        if not amount_ngn or not amount_usd:
+            converted = get_converted_amounts(amount, currency)
+            validated_data['amount_ngn'] = Decimal(str(converted['ngn']))
+            validated_data['amount_usd'] = Decimal(str(converted['usd']))
+
         # Creator is set in the view perform_create
         return super().create(validated_data)
 
