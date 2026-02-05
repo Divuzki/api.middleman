@@ -2,6 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 from .models import Agreement, AgreementOffer, ChatMessage
 from wallet.models import Wallet, Transaction
+from middleman_api.utils import get_converted_amounts
 import uuid
 
 class AgreementService:
@@ -38,10 +39,13 @@ class AgreementService:
                 buyer_wallet.save()
                 
                 # Create Transaction Record
+                converted = get_converted_amounts(offer.amount, buyer_wallet.currency)
                 Transaction.objects.create(
                     wallet=buyer_wallet,
                     title=f"Escrow Lock: {agreement.title}",
                     amount=offer.amount,
+                    amount_usd=converted.get('amount_usd'),
+                    amount_ngn=converted.get('amount_ngn'),
                     transaction_type='TRANSFER',
                     category='Escrow Lock',
                     status='SUCCESSFUL',
@@ -51,6 +55,8 @@ class AgreementService:
                 
                 # Update Agreement
                 agreement.amount = offer.amount
+                agreement.amount_usd = offer.amount_usd
+                agreement.amount_ngn = offer.amount_ngn
                 agreement.timeline = offer.timeline
                 agreement.status = 'active'
                 agreement.secured_at = timezone.now()
@@ -90,10 +96,13 @@ class AgreementService:
             seller_wallet.save()
             
             # Create Transaction Record
+            converted = get_converted_amounts(agreement.amount, seller_wallet.currency)
             Transaction.objects.create(
                 wallet=seller_wallet,
                 title=f"Escrow Release: {agreement.title}",
                 amount=agreement.amount,
+                amount_usd=converted.get('amount_usd'),
+                amount_ngn=converted.get('amount_ngn'),
                 transaction_type='TRANSFER',
                 category='Escrow Release',
                 status='SUCCESSFUL',
@@ -125,10 +134,13 @@ class AgreementService:
         """
         Creates a new offer and the associated chat message.
         """
+        converted = get_converted_amounts(amount, agreement.currency)
         with transaction.atomic():
             offer = AgreementOffer.objects.create(
                 agreement=agreement,
                 amount=amount,
+                amount_usd=converted.get('amount_usd'),
+                amount_ngn=converted.get('amount_ngn'),
                 description=description,
                 timeline=timeline,
                 status='pending'
@@ -170,6 +182,8 @@ class AgreementService:
         Locks terms of an agreement based on an offer.
         """
         agreement.amount = offer.amount
+        agreement.amount_usd = offer.amount_usd
+        agreement.amount_ngn = offer.amount_ngn
         agreement.timeline = offer.timeline
         agreement.status = 'terms_locked'
         agreement.terms_locked_at = timezone.now()

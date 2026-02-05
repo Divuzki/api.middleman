@@ -3,6 +3,7 @@ from django.utils import timezone
 from .models import Wager, ChatMessage
 from wallet.models import Wallet, Transaction
 from .serializers import WagerSerializer
+from middleman_api.utils import get_converted_amounts
 import uuid
 
 class WagerService:
@@ -42,10 +43,13 @@ class WagerService:
             wallet.save()
 
             # 2. Create Transaction
+            converted = get_converted_amounts(amount, wallet.currency)
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Stake: {wager_data.get('title', 'Untitled')}",
                 amount=amount,
+                amount_usd=converted.get('amount_usd'),
+                amount_ngn=converted.get('amount_ngn'),
                 transaction_type='DEBIT',
                 category='Wager Stake',
                 status='SUCCESSFUL',
@@ -100,10 +104,13 @@ class WagerService:
             wallet.save()
 
             # 2. Create Transaction
+            converted = get_converted_amounts(amount, wallet.currency)
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Join: {wager.title}",
                 amount=amount,
+                amount_usd=converted.get('amount_usd'),
+                amount_ngn=converted.get('amount_ngn'),
                 transaction_type='DEBIT',
                 category='Wager Stake',
                 status='SUCCESSFUL',

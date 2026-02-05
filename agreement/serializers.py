@@ -22,7 +22,7 @@ class AgreementOfferSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgreementOffer
-        fields = ['id', 'amount', 'description', 'timeline', 'status', 'createdAt']
+        fields = ['id', 'amount', 'amount_usd', 'amount_ngn', 'description', 'timeline', 'status', 'createdAt']
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
@@ -53,8 +53,6 @@ class AgreementSerializer(serializers.ModelSerializer):
     date = serializers.DateTimeField(source='created_at', read_only=True)
     deliveryProof = serializers.JSONField(source='delivery_proof', read_only=True)
     initialOffer = serializers.SerializerMethodField()
-    amount_usd = serializers.SerializerMethodField()
-    amount_ngn = serializers.SerializerMethodField()
 
     class Meta:
         model = Agreement
@@ -66,12 +64,6 @@ class AgreementSerializer(serializers.ModelSerializer):
             'initialOffer', 'activeOfferId'
         ]
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
-
-    def get_amount_usd(self, obj):
-        return get_converted_amounts(obj.amount, obj.currency)['amount_usd']
-
-    def get_amount_ngn(self, obj):
-        return get_converted_amounts(obj.amount, obj.currency)['amount_ngn']
 
     def get_initialOffer(self, obj):
         # Return the first offer if it exists (usually created by seller on init)

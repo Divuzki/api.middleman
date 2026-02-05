@@ -64,8 +64,8 @@ class WagerSerializer(serializers.ModelSerializer):
         # If missing, calculate using helper.
         if not amount_ngn or not amount_usd:
             converted = get_converted_amounts(amount, currency)
-            validated_data['amount_ngn'] = Decimal(str(converted['ngn']))
-            validated_data['amount_usd'] = Decimal(str(converted['usd']))
+            validated_data['amount_ngn'] = Decimal(str(converted['amount_ngn'])) if converted['amount_ngn'] is not None else None
+            validated_data['amount_usd'] = Decimal(str(converted['amount_usd'])) if converted['amount_usd'] is not None else None
 
         # Creator is set in the view perform_create
         return super().create(validated_data)

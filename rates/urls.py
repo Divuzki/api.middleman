@@ -3,5 +3,4 @@ from .views import RateListView
 
 urlpatterns = [
     path('', RateListView.as_view(), name='rate-list'),
-    path('/', RateListView.as_view(), name='rate-list-slash'),
 ]
