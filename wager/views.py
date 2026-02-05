@@ -45,23 +45,31 @@ class WagerViewSet(viewsets.ModelViewSet):
         if max_amount:
             queryset = queryset.filter(amount__lte=max_amount)
 
-        # 4. View Filter
+        # 4. View & Status Filter
         view_filter = self.request.query_params.get('view')
+        status_param = self.request.query_params.get('status')
         user_id = self.request.user.id
         
         if view_filter == 'for_you':
-            # Updated Logic: "My Active Wagers"
-            # Created by user OR user is opponent
-            # AND status is OPEN or MATCHED
-            queryset = queryset.filter(
-                (Q(creator_id=user_id) | Q(opponent_id=user_id)) &
-                Q(status__in=['OPEN', 'MATCHED'])
-            )
+            # Base: User is creator or opponent
+            queryset = queryset.filter(Q(creator_id=user_id) | Q(opponent_id=user_id))
+            
+            # Apply Status Filter
+            if status_param == 'pending':
+                queryset = queryset.filter(status='OPEN')
+            elif status_param == 'active':
+                queryset = queryset.filter(status='MATCHED')
+            elif status_param == 'completed':
+                queryset = queryset.filter(status__in=['COMPLETED', 'CANCELLED', 'DRAW'])
+            else:
+                # Default behavior: Show Active (Open + Matched)
+                queryset = queryset.filter(status__in=['OPEN', 'MATCHED'])
+                
         elif view_filter == 'all_markets':
             # All OPEN wagers available
             queryset = queryset.filter(status='OPEN')
         elif view_filter == 'mine':
-            # Legacy/Specific: Just wagers created by user (optional, keeping for safety)
+            # Legacy/Specific: Just wagers created by user
             queryset = queryset.filter(creator_id=user_id)
             
         return queryset
