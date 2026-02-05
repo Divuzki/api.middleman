@@ -66,7 +66,7 @@ class DepositView(APIView):
             try:
                 if currency == 'NGN':
                     # Korapay Logic
-                    gateway_fee = float(amount) * KORAPAY_FEE_PERCENTAGE
+                    gateway_fee = float(amount) * KORAPAY_FEE_PERCENTAGE + 100
                     total_amount = float(amount) + gateway_fee
                     
                     tx.payment_method = 'KORAPAY'
