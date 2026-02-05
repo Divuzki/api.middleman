@@ -18,7 +18,7 @@ class TransactionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Transaction
-        fields = ['id', 'title', 'type', 'amount', 'date', 'status', 'icon', 'category']
+        fields = ['id', 'title', 'amount', 'amount_usd', 'amount_ngn', 'type', 'category', 'status', 'reference', 'description', 'icon', 'date']
 
     def get_type(self, obj):
         if obj.transaction_type in ['DEPOSIT', 'WAGER_WIN']:

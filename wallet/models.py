@@ -32,6 +32,8 @@ class Transaction(models.Model):
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name='transactions')
     title = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount_usd = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    amount_ngn = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
     category = models.CharField(max_length=50) # Deposit, Withdrawal, etc.
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')

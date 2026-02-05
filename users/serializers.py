@@ -48,15 +48,34 @@ class UserProfilePictureSerializer(serializers.ModelSerializer):
         fields = ['photoURL']
 
 class PayoutAccountSerializer(serializers.ModelSerializer):
-    bankName = serializers.CharField(source='bank_name')
-    bankCode = serializers.CharField(source='bank_code')
-    accountNumber = serializers.CharField(source='account_number')
-    accountName = serializers.CharField(source='account_name')
+    type = serializers.ChoiceField(choices=['bank', 'crypto'])
+    currency = serializers.ChoiceField(choices=['NGN', 'USD'])
+    
+    # Bank
+    bankName = serializers.CharField(source='bank_name', required=False, allow_blank=True, allow_null=True)
+    bankCode = serializers.CharField(source='bank_code', required=False, allow_blank=True, allow_null=True)
+    accountNumber = serializers.CharField(source='account_number', required=False, allow_blank=True, allow_null=True)
+    accountName = serializers.CharField(source='account_name', required=False, allow_blank=True, allow_null=True)
+    
+    # Crypto
+    walletAddress = serializers.CharField(source='wallet_address', required=False, allow_blank=True, allow_null=True)
+    network = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
     class Meta:
         model = PayoutAccount
-        fields = ['id', 'bankName', 'bankCode', 'accountNumber', 'accountName', 'createdAt']
+        fields = ['id', 'type', 'currency', 'bankName', 'bankCode', 'accountNumber', 'accountName', 'walletAddress', 'network', 'createdAt']
+
+    def validate(self, data):
+        type_ = data.get('type')
+        if type_ == 'bank':
+            if not data.get('bank_code') or not data.get('account_number'):
+                raise serializers.ValidationError("Bank code and account number are required for bank accounts.")
+        elif type_ == 'crypto':
+            if not data.get('wallet_address') or not data.get('network'):
+                raise serializers.ValidationError("Wallet address and network are required for crypto accounts.")
+        return data
 
 class BankVerificationSerializer(serializers.Serializer):
     bankCode = serializers.CharField()

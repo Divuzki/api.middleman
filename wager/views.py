@@ -8,6 +8,7 @@ from users.notifications import notify_badge_counts
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from .signals import send_wager_notification
+from .services import WagerService
 
 class StandardResultsSetPagination(pagination.PageNumberPagination):
     page_size = 10
@@ -74,41 +75,48 @@ class WagerViewSet(viewsets.ModelViewSet):
             
         return queryset
 
-    def perform_create(self, serializer):
-        wager = serializer.save(creator=self.request.user)
-        if wager.opponent:
-            notify_badge_counts(wager.opponent)
+    def create(self, request, *args, **kwargs):
+        pin = request.data.get('pin')
+        try:
+            # Note: WagerService.create_wager expects a mutable dict or we handle copy inside
+            # request.data is immutable if it's a QueryDict, but here we can pass it 
+            # and let the service/serializer handle it. Ideally pass a dict.
+            data = request.data
+            if hasattr(data, 'dict'):
+                data = data.dict()
+            
+            wager = WagerService.create_wager(request.user, data, pin)
+            
+            # Notify Opponent if specified (though in creation usually not matched yet)
+            if wager.opponent:
+                notify_badge_counts(wager.opponent)
+                
+            serializer = self.get_serializer(wager)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({"detail": "Failed to create wager"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'], url_path='join')
     def join_wager(self, request, id=None):
         wager = self.get_object()
+        pin = request.data.get('pin')
         
-        # 1. Validate Status
-        if wager.status != 'OPEN':
-            return Response(
-                {"detail": "This wager is no longer open."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-            
-        # 2. Validate User (Cannot join own wager)
-        # Note: Checking ID string equality for cross-db safety
-        if str(wager.creator_id) == str(request.user.id):
-            return Response(
-                {"detail": "You cannot join your own wager."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 3. Update Wager
-        wager.opponent = request.user
-        wager.status = 'MATCHED'
-        wager.save()
+        try:
+            wager = WagerService.join_wager(request.user, wager, pin)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
-        # 4. Notify Creator
+        # Notify
+        self._notify_wager_update(wager)
         notify_badge_counts(wager.creator)
+        notify_badge_counts(wager.opponent)
         
-        # 5. Return Updated Wager
-        serializer = self.get_serializer(wager)
-        return Response(serializer.data)
+        return Response(self.get_serializer(wager).data)
 
     @action(detail=True, methods=['post'], url_path='draw/request')
     def draw_request(self, request, id=None):
@@ -243,3 +251,15 @@ class WagerViewSet(viewsets.ModelViewSet):
             )
             
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def _notify_wager_update(self, wager):
+        channel_layer = get_channel_layer()
+        serializer = self.get_serializer(wager)
+        
+        async_to_sync(channel_layer.group_send)(
+            f'wager_{wager.id}',
+            {
+                'type': 'wager_updated',
+                'data': serializer.data
+            }
+        )

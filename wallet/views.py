@@ -33,6 +33,10 @@ class DepositView(APIView):
 
             # Ensure wallet exists
             wallet, _ = Wallet.objects.get_or_create(user_id=request.user.id)
+            
+            # Calculate USD/NGN amounts
+            from middleman_api.utils import get_converted_amounts
+            converted = get_converted_amounts(amount, wallet.currency)
 
             # Create pending transaction
             ref = f"ref_{uuid.uuid4().hex[:12]}"
@@ -40,6 +44,8 @@ class DepositView(APIView):
                 wallet=wallet,
                 title="Deposit",
                 amount=amount,
+                amount_usd=converted.get('amount_usd'),
+                amount_ngn=converted.get('amount_ngn'),
                 transaction_type='DEPOSIT',
                 category='Deposit',
                 status='PENDING',
@@ -152,6 +158,10 @@ class WithdrawalView(APIView):
                     "status": "error",
                     "message": "Insufficient funds"
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Calculate USD/NGN amounts
+            from middleman_api.utils import get_converted_amounts
+            converted = get_converted_amounts(amount, wallet.currency)
 
             # Create Transaction
             tx_id = f"tx_{uuid.uuid4().hex[:12]}"
@@ -159,6 +169,8 @@ class WithdrawalView(APIView):
                 wallet=wallet,
                 title="Withdrawal",
                 amount=amount,
+                amount_usd=converted.get('amount_usd'),
+                amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WITHDRAWAL',
                 category='Withdrawal',
                 status='PENDING',

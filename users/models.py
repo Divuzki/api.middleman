@@ -58,15 +58,35 @@ class User(AbstractUser):
 
 
 class PayoutAccount(models.Model):
+    TYPE_CHOICES = [
+        ('bank', 'Bank Account'),
+        ('crypto', 'Crypto Wallet'),
+    ]
+    CURRENCY_CHOICES = [
+        ('NGN', 'Nigerian Naira'),
+        ('USD', 'US Dollar'),
+    ]
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payout_accounts')
-    bank_name = models.CharField(max_length=255)
-    bank_code = models.CharField(max_length=50)
-    account_number = models.CharField(max_length=50)
-    account_name = models.CharField(max_length=255)
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='bank')
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='NGN')
+    
+    # Bank Fields
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    bank_code = models.CharField(max_length=50, blank=True, null=True)
+    account_number = models.CharField(max_length=50, blank=True, null=True)
+    account_name = models.CharField(max_length=255, blank=True, null=True)
+    
+    # Crypto Fields
+    wallet_address = models.CharField(max_length=255, blank=True, null=True)
+    network = models.CharField(max_length=50, blank=True, null=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.bank_name} - {self.account_number}"
+        if self.type == 'bank':
+            return f"{self.bank_name} - {self.account_number}"
+        return f"{self.network} - {self.wallet_address}"
 
 
 class DeviceProfile(models.Model):

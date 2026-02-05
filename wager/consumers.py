@@ -70,6 +70,13 @@ class WagerConsumer(AsyncWebsocketConsumer):
         )
 
     # Event handlers
+    async def wager_updated(self, event):
+        data = event['data']
+        await self.send(text_data=json.dumps({
+            'type': 'wager_updated',
+            'data': data
+        }))
+
     async def chat_message(self, event):
         # Ensure payload structure matches `websocket_api_wager.md`
         data = event['data']

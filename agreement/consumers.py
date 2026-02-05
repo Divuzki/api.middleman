@@ -109,6 +109,12 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         if offer_dict and 'amount' in offer_dict:
             offer_dict['amount'] = float(offer_dict['amount'])
             
+            # Add computed currency fields
+            agreement = await self.get_agreement(self.agreement_id)
+            converted = await self.get_converted_amounts_async(offer_dict['amount'], agreement.currency)
+            offer_dict['amount_usd'] = converted['amount_usd']
+            offer_dict['amount_ngn'] = converted['amount_ngn']
+            
         # Construct response with offer object
         response_data = {
             'type': 'offer_created',
@@ -211,6 +217,8 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         if result['success']:
             agreement = result['agreement']
             
+            converted = await self.get_converted_amounts_async(agreement.amount, agreement.currency)
+
             # Smart Dispatcher: Agreement Update (Critical)
             await self.notify_users(
                 event_type='agreement_updated',
@@ -219,6 +227,8 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     'status': agreement.status,
                     'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
                     'amount': float(agreement.amount) if agreement.amount else None,
+                    'amount_usd': converted['amount_usd'],
+                    'amount_ngn': converted['amount_ngn'],
                     'timeline': agreement.timeline,
                     'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
                     'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
@@ -231,6 +241,10 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             # Notifications
             await self.send_user_notification(agreement.seller_id, 'balance')
             await self.notify_participants_badges(self.agreement_id)
+
+    @database_sync_to_async
+    def get_agreement(self, agreement_id):
+        return Agreement.objects.get(id=agreement_id)
 
     # Event handlers
     async def chat_message(self, event):
