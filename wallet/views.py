@@ -16,7 +16,13 @@ import logging
 from .models import Wallet, Transaction
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
 from users.notifications import notify_balance_update
-from .utils import KorapayClient, NOWPaymentsClient, verify_nowpayments_signature
+from .utils import (
+    KorapayClient, 
+    NOWPaymentsClient, 
+    verify_nowpayments_signature,
+    KORAPAY_FEE_PERCENTAGE,
+    NOWPAYMENTS_FEE_PERCENTAGE
+)
 from django.conf import settings
 
 User = get_user_model()
@@ -34,13 +40,13 @@ class DepositView(APIView):
             # Ensure wallet exists
             wallet, _ = Wallet.objects.get_or_create(user_id=request.user.id)
             
-            # Calculate USD/NGN amounts
+            # Calculate USD/NGN amounts (for display/record)
             from middleman_api.utils import get_converted_amounts
             converted = get_converted_amounts(amount, wallet.currency)
 
             # Create pending transaction
             ref = f"ref_{uuid.uuid4().hex[:12]}"
-            Transaction.objects.create(
+            tx = Transaction.objects.create(
                 wallet=wallet,
                 title="Deposit",
                 amount=amount,
@@ -53,85 +59,84 @@ class DepositView(APIView):
                 icon='savings'
             )
 
-            # Generate URL for payment selection page
-            payment_url = request.build_absolute_uri(reverse('payment-selection', kwargs={'reference': ref}))
+            # Determine Payment Method and Calculate Fees
+            payment_link = None
+            redirect_url = "https://midman.app/payment/callback" 
+            
+            try:
+                if currency == 'NGN':
+                    # Korapay Logic
+                    gateway_fee = float(amount) * KORAPAY_FEE_PERCENTAGE
+                    total_amount = float(amount) + gateway_fee
+                    
+                    tx.payment_method = 'KORAPAY'
+                    tx.payment_currency = 'NGN'
+                    tx.save()
+                    
+                    client = KorapayClient()
+                    result = client.initialize_payment(ref, total_amount, request.user.email, redirect_url)
+                    
+                    if result and result.get('status') and result.get('data'):
+                        payment_link = result['data']['checkout_url']
+                        
+                elif currency == 'USD':
+                    # NOWPayments Logic
+                    gateway_fee = float(amount) * NOWPAYMENTS_FEE_PERCENTAGE
+                    total_amount = float(amount) + gateway_fee
+                    
+                    tx.payment_method = 'NOWPAYMENTS'
+                    tx.payment_currency = 'USDT' # Default crypto
+                    tx.save()
+                    
+                    client = NOWPaymentsClient()
+                    cancel_url = "https://midman.app/payment/cancel"
+                    
+                    result = client.create_invoice(
+                        ref, 
+                        total_amount, 
+                        pay_currency="usdt",
+                        price_currency="usd", 
+                        success_url=redirect_url,
+                        cancel_url=cancel_url
+                    )
+                    
+                    if result and result.get('invoice_url'):
+                        payment_link = result['invoice_url']
+                
+                else:
+                    return Response({
+                        "status": "error",
+                        "message": f"Unsupported currency: {currency}"
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
-            return Response({
-                "status": "success",
-                "message": "Deposit initiated",
-                "payment_url": payment_url,
-                "reference": ref
-            }, status=status.HTTP_200_OK)
+                if payment_link:
+                    return Response({
+                        "status": "success",
+                        "message": "Deposit initiated",
+                        "payment_url": payment_link,
+                        "reference": ref,
+                        "currency": currency,
+                        "amount": float(amount),
+                        "fee": round(gateway_fee, 2),
+                        "total_charged": round(total_amount, 2)
+                    }, status=status.HTTP_200_OK)
+                else:
+                     return Response({
+                        "status": "error",
+                        "message": "Failed to generate payment link"
+                    }, status=status.HTTP_502_BAD_GATEWAY)
+
+            except Exception as e:
+                logger.error(f"Deposit error: {str(e)}")
+                return Response({
+                    "status": "error",
+                    "message": "Internal server error during deposit initialization"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         return Response({
             "status": "error",
             "message": "Invalid amount"
         }, status=status.HTTP_400_BAD_REQUEST)
-
-class PaymentSelectionPage(TemplateView):
-    template_name = "wallet/select_payment.html"
-    
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        reference = kwargs.get('reference')
-        transaction = get_object_or_404(Transaction, reference=reference)
-        context['amount'] = transaction.amount
-        context['reference'] = reference
-        return context
-
-class ProcessPaymentChoice(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request, reference):
-        tx = get_object_or_404(Transaction, reference=reference)
-        payment_method = request.data.get('payment_method')
-        
-        if tx.status == 'SUCCESSFUL':
-            return Response({"message": "Transaction already completed"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Get user for email (Korapay needs it)
-        try:
-            user = User.objects.get(id=tx.wallet.user_id)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        if payment_method == 'KORAPAY':
-            tx.payment_method = 'KORAPAY'
-            tx.payment_currency = 'NGN'
-            tx.save()
-            
-            client = KorapayClient()
-            # Redirect to a success page or back to app deep link
-            # For now, we'll use a placeholder that the app should intercept
-            redirect_url = "https://midman.app/payment/callback" 
-            
-            result = client.initialize_payment(reference, tx.amount, user.email, redirect_url)
-            if result and result.get('status'):
-                checkout_url = result['data']['checkout_url']
-                return redirect(checkout_url)
-            
-        elif payment_method == 'NOWPAYMENTS':
-            tx.payment_method = 'NOWPAYMENTS'
-            tx.payment_currency = 'USDT'
-            tx.save()
-            
-            client = NOWPaymentsClient()
-            # Redirect to a success page or back to app deep link
-            redirect_url = "https://midman.app/payment/callback"
-            cancel_url = "https://midman.app/payment/cancel"
-
-            # NOWPayments creates an invoice and we redirect user to it
-            result = client.create_invoice(
-                reference, 
-                tx.amount, 
-                pay_currency="usdt",
-                success_url=redirect_url,
-                cancel_url=cancel_url
-            )
-            if result and result.get('invoice_url'):
-                return redirect(result['invoice_url'])
-        
-        return Response({"error": "Failed to initialize payment"}, status=status.HTTP_400_BAD_REQUEST)
 
 class WithdrawalView(APIView):
     permission_classes = [IsAuthenticated]

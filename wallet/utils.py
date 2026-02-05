@@ -1,11 +1,17 @@
-import requests
+from decimal import Decimal
+from rates.models import Rate
 import logging
+import requests
 import json
 import hmac
 import hashlib
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+# Fee Constants (2026)
+KORAPAY_FEE_PERCENTAGE = 0.015  # 1.5%
+NOWPAYMENTS_FEE_PERCENTAGE = 0.005  # 0.5%
 
 class KorapayClient:
     BASE_URL = "https://api.korapay.com/merchant/api/v1"
@@ -70,16 +76,17 @@ class NOWPaymentsClient:
             "Content-Type": "application/json"
         }
 
-    def create_invoice(self, order_id, price_amount, pay_currency="usdt", success_url=None, cancel_url=None):
+    def create_invoice(self, order_id, price_amount, pay_currency="usdt", price_currency="ngn", success_url=None, cancel_url=None):
         """
         Create an invoice on NOWPayments.
-        price_amount: Amount in NGN (Fiat)
+        price_amount: Amount in Fiat/Crypto
+        price_currency: The currency of the price_amount (e.g. 'ngn', 'usd')
         pay_currency: The crypto currency user wants to pay in (default usdt)
         """
         url = f"{self.base_url}/invoice"
         payload = {
             "price_amount": float(price_amount),
-            "price_currency": "ngn",
+            "price_currency": price_currency,
             "pay_currency": pay_currency,
             "order_id": order_id,
             "success_url": success_url,

@@ -53,6 +53,7 @@ class AgreementSerializer(serializers.ModelSerializer):
     date = serializers.DateTimeField(source='created_at', read_only=True)
     deliveryProof = serializers.JSONField(source='delivery_proof', read_only=True)
     initialOffer = serializers.SerializerMethodField()
+    currency = serializers.CharField(max_length=10, default='NGN')
 
     class Meta:
         model = Agreement

@@ -45,16 +45,13 @@ def get_converted_amounts(amount, currency):
         logger.error(f"Error fetching rates: {e}")
         usd_rate = Decimal('1500.00')
 
-    if currency == 'NGN':
-        result['amount_ngn'] = float(amount_dec)
-        if usd_rate > 0:
-            result['amount_usd'] = float(round(amount_dec / usd_rate, 2))
-    elif currency == 'USD':
+    if currency == 'USD':
         result['amount_usd'] = float(amount_dec)
         result['amount_ngn'] = float(round(amount_dec * usd_rate, 2))
     else:
-        # Unknown currency, treat as NGN or just return as is?
-        # Assuming NGN as base if unknown for now, or just leave empty
-        pass
+        # Default to NGN for 'NGN' or any other/unknown currency
+        result['amount_ngn'] = float(amount_dec)
+        if usd_rate > 0:
+            result['amount_usd'] = float(round(amount_dec / usd_rate, 2))
     
     return result
