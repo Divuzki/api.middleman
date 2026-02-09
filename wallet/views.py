@@ -61,6 +61,7 @@ class DepositView(APIView):
 
             # Determine Payment Method and Calculate Fees
             payment_link = None
+            payment_details = None
             redirect_url = "https://midman.app/payment/callback" 
             
             try:
@@ -89,19 +90,21 @@ class DepositView(APIView):
                     tx.save()
                     
                     client = NOWPaymentsClient()
-                    cancel_url = "https://midman.app/payment/cancel"
                     
-                    result = client.create_invoice(
+                    result = client.create_payment(
                         ref, 
                         total_amount, 
                         pay_currency="trx",
-                        price_currency="usd", 
-                        success_url=redirect_url,
-                        cancel_url=cancel_url
+                        price_currency="usd"
                     )
                     
-                    if result and result.get('invoice_url'):
-                        payment_link = result['invoice_url']
+                    if result and result.get('pay_address'):
+                        payment_details = {
+                            "pay_address": result.get('pay_address'),
+                            "pay_amount": result.get('pay_amount'),
+                            "pay_currency": result.get('pay_currency'),
+                            "payment_id": result.get('payment_id')
+                        }
                 
                 else:
                     return Response({
@@ -109,8 +112,8 @@ class DepositView(APIView):
                         "message": f"Unsupported currency: {currency}"
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-                if payment_link:
-                    return Response({
+                if payment_link or (currency == 'USD' and payment_details):
+                    response_data = {
                         "status": "success",
                         "message": "Deposit initiated",
                         "payment_url": payment_link,
@@ -119,7 +122,11 @@ class DepositView(APIView):
                         "amount": float(amount),
                         "fee": round(gateway_fee, 2),
                         "total_charged": round(total_amount, 2)
-                    }, status=status.HTTP_200_OK)
+                    }
+                    if payment_details:
+                        response_data.update(payment_details)
+                        
+                    return Response(response_data, status=status.HTTP_200_OK)
                 else:
                      return Response({
                         "status": "error",

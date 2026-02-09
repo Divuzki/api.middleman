@@ -93,6 +93,7 @@ class NOWPaymentsClient:
             "success_url": success_url,
             "cancel_url": cancel_url,
             "is_fee_paid_by_user": True,
+            "is_fixed_rate": True,
             "ipn_callback_url": settings.NOWPAYMENTS_WEBHOOK_URL
         }
 
@@ -103,6 +104,33 @@ class NOWPaymentsClient:
             return response.json()
         except requests.RequestException as e:
             logger.error(f"NOWPayments invoice error: {str(e)}")
+            if e.response is not None:
+                logger.error(f"NOWPayments response: {e.response.text}")
+            return None
+
+    def create_payment(self, order_id, price_amount, pay_currency="trx", price_currency="usd"):
+        """
+        Create a payment on NOWPayments (Direct Payment).
+        """
+        url = f"{self.base_url}/payment"
+        payload = {
+            "price_amount": float(price_amount),
+            "price_currency": price_currency,
+            "pay_currency": pay_currency,
+            "order_id": order_id,
+            "order_description": f"Deposit for order {order_id}",
+            "ipn_callback_url": settings.NOWPAYMENTS_WEBHOOK_URL,
+            "is_fixed_rate": True,
+            "is_fee_paid_by_user": True
+        }
+
+        try:
+            logger.info(f"Creating NOWPayments payment with payload: {json.dumps(payload)}")
+            response = requests.post(url, json=payload, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"NOWPayments payment error: {str(e)}")
             if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
             return None
