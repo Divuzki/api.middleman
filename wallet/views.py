@@ -85,7 +85,7 @@ class DepositView(APIView):
                     total_amount = float(amount) + gateway_fee
                     
                     tx.payment_method = 'NOWPAYMENTS'
-                    tx.payment_currency = 'USDT' # Default crypto
+                    tx.payment_currency = 'USD' # Default crypto
                     tx.save()
                     
                     client = NOWPaymentsClient()
@@ -94,7 +94,7 @@ class DepositView(APIView):
                     result = client.create_invoice(
                         ref, 
                         total_amount, 
-                        pay_currency="usdt",
+                        pay_currency="trx",
                         price_currency="usd", 
                         success_url=redirect_url,
                         cancel_url=cancel_url

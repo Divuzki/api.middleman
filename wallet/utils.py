@@ -76,12 +76,12 @@ class NOWPaymentsClient:
             "Content-Type": "application/json"
         }
 
-    def create_invoice(self, order_id, price_amount, pay_currency="usdt", price_currency="ngn", success_url=None, cancel_url=None):
+    def create_invoice(self, order_id, price_amount, pay_currency="trx", price_currency="ngn", success_url=None, cancel_url=None):
         """
         Create an invoice on NOWPayments.
         price_amount: Amount in Fiat/Crypto
         price_currency: The currency of the price_amount (e.g. 'ngn', 'usd')
-        pay_currency: The crypto currency user wants to pay in (default usdt)
+        pay_currency: The crypto currency user wants to pay in (default usd)
         """
         url = f"{self.base_url}/invoice"
         payload = {
@@ -89,18 +89,21 @@ class NOWPaymentsClient:
             "price_currency": price_currency,
             "pay_currency": pay_currency,
             "order_id": order_id,
+            "order_description": f"Deposit for order {order_id}",
             "success_url": success_url,
             "cancel_url": cancel_url,
+            "is_fee_paid_by_user": True,
             "ipn_callback_url": settings.NOWPAYMENTS_WEBHOOK_URL
         }
 
         try:
+            logger.info(f"Creating NOWPayments invoice with payload: {json.dumps(payload)}")
             response = requests.post(url, json=payload, headers=self.headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
             logger.error(f"NOWPayments invoice error: {str(e)}")
-            if e.response:
+            if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
             return None
 

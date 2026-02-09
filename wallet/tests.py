@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from unittest.mock import patch
 from .models import Wallet, Transaction
-from .views import DepositView, VerifyDepositView, PaymentSelectionPage, ProcessPaymentChoice
+from .views import DepositView, VerifyDepositView
 from django.conf import settings
 import hmac
 import hashlib
@@ -53,61 +53,40 @@ class DepositFlowTests(TestCase):
         self.client.force_authenticate(user=self.user)
         self.wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
 
-    def test_initiate_deposit(self):
-        url = reverse('deposit')
-        data = {'amount': '5000.00', 'currency': 'NGN'}
-        response = self.client.post(url, data)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('payment_url', response.data)
-        self.assertTrue(Transaction.objects.exists())
-        
     @patch('wallet.views.KorapayClient.initialize_payment')
-    def test_process_korapay_selection(self, mock_init):
-        # Create transaction
-        tx = Transaction.objects.create(
-            wallet=self.wallet, amount=5000, reference='ref_123', status='PENDING'
-        )
-        
+    def test_initiate_deposit_korapay(self, mock_init):
         mock_init.return_value = {
             'status': True,
             'data': {'checkout_url': 'https://checkout.korapay.com/xyz'}
         }
+
+        url = reverse('deposit')
+        data = {'amount': '5000.00', 'currency': 'NGN'}
+        response = self.client.post(url, data)
         
-        url = reverse('process-payment-choice', kwargs={'reference': 'ref_123'})
-        # Unauthenticated request (AllowAny)
-        client = APIClient() 
-        response = client.post(url, {'payment_method': 'KORAPAY'})
-        
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response.url, 'https://checkout.korapay.com/xyz')
-        
-        tx.refresh_from_db()
-        self.assertEqual(tx.payment_method, 'KORAPAY')
-        self.assertEqual(tx.payment_currency, 'NGN')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['payment_url'], 'https://checkout.korapay.com/xyz')
+        self.assertEqual(response.data['currency'], 'NGN')
+        self.assertTrue(Transaction.objects.filter(payment_method='KORAPAY').exists())
 
     @patch('wallet.views.NOWPaymentsClient.create_invoice')
-    def test_process_nowpayments_selection(self, mock_create):
-        tx = Transaction.objects.create(
-            wallet=self.wallet, amount=5000, reference='ref_456', status='PENDING'
-        )
-        
+    def test_initiate_deposit_nowpayments(self, mock_create):
         mock_create.return_value = {
             'invoice_url': 'https://nowpayments.io/payment/xyz'
         }
-        
-        url = reverse('process-payment-choice', kwargs={'reference': 'ref_456'})
-        client = APIClient()
-        response = client.post(url, {'payment_method': 'NOWPAYMENTS'})
-        
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response.url, 'https://nowpayments.io/payment/xyz')
-        
-        tx.refresh_from_db()
-        self.assertEqual(tx.payment_method, 'NOWPAYMENTS')
-        self.assertEqual(tx.payment_currency, 'USDT')
 
+        url = reverse('deposit')
+        data = {'amount': '100.00', 'currency': 'USD'}
+        response = self.client.post(url, data)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['payment_url'], 'https://nowpayments.io/payment/xyz')
+        self.assertEqual(response.data['currency'], 'USD')
+        self.assertTrue(Transaction.objects.filter(payment_method='NOWPAYMENTS').exists())
+
+    @patch('wallet.views.notify_balance_update')
     @patch('wallet.views.KorapayClient.verify_payment')
-    def test_verify_korapay_deposit(self, mock_verify):
+    def test_verify_korapay_deposit(self, mock_verify, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=5000, reference='ref_789', 
             status='PENDING', payment_method='KORAPAY'
@@ -126,6 +105,7 @@ class DepositFlowTests(TestCase):
         
         tx.refresh_from_db()
         self.assertEqual(tx.status, 'SUCCESSFUL')
+        mock_notify.assert_called_once()
 
 class WebhookTests(TestCase):
     databases = {'default', 'wallet_db'}
@@ -145,15 +125,16 @@ class WebhookTests(TestCase):
         )
         return digest.hexdigest()
 
-    def test_nowpayments_webhook_success(self):
+    @patch('wallet.views.notify_balance_update')
+    def test_nowpayments_webhook_success(self, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=3000, reference='ref_np_ok', status='PENDING',
-            payment_method='NOWPAYMENTS', payment_currency='USDT'
+            payment_method='NOWPAYMENTS', payment_currency='USD'
         )
         payload = {
             "payment_status": "finished",
             "order_id": "ref_np_ok",
-            "pay_currency": "usdt"
+            "pay_currency": "usd"
         }
         sig = self._sign_nowpayments(payload)
         url = reverse('nowpayments-webhook')
@@ -163,11 +144,12 @@ class WebhookTests(TestCase):
         self.wallet.refresh_from_db()
         self.assertEqual(tx.status, 'SUCCESSFUL')
         self.assertEqual(float(self.wallet.balance), 3000.0)
+        mock_notify.assert_called_once()
 
     def test_nowpayments_wrong_asset(self):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=2000, reference='ref_np_wrong', status='PENDING',
-            payment_method='NOWPAYMENTS', payment_currency='USDT'
+            payment_method='NOWPAYMENTS', payment_currency='USD'
         )
         payload = {
             "payment_status": "finished",
@@ -183,15 +165,16 @@ class WebhookTests(TestCase):
         self.assertEqual(tx.status, 'PENDING')
         self.assertEqual(float(self.wallet.balance), 0.0)
 
-    def test_nowpayments_repeated_deposit(self):
+    @patch('wallet.views.notify_balance_update')
+    def test_nowpayments_repeated_deposit(self, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=1500, reference='ref_np_repeat', status='PENDING',
-            payment_method='NOWPAYMENTS', payment_currency='USDT'
+            payment_method='NOWPAYMENTS', payment_currency='USD'
         )
         payload = {
             "payment_status": "finished",
             "order_id": "ref_np_repeat",
-            "pay_currency": "usdt"
+            "pay_currency": "usd"
         }
         sig = self._sign_nowpayments(payload)
         url = reverse('nowpayments-webhook')
@@ -203,9 +186,12 @@ class WebhookTests(TestCase):
         self.wallet.refresh_from_db()
         self.assertEqual(tx.status, 'SUCCESSFUL')
         self.assertEqual(float(self.wallet.balance), 1500.0)
+        # Should be called only once because second time tx is already successful
+        mock_notify.assert_called_once()
 
+    @patch('wallet.views.notify_balance_update')
     @patch('wallet.views.KorapayClient.verify_payment')
-    def test_korapay_webhook_success(self, mock_verify):
+    def test_korapay_webhook_success(self, mock_verify, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=2500, reference='ref_kp_ok', status='PENDING',
             payment_method='KORAPAY', payment_currency='NGN'
@@ -221,3 +207,4 @@ class WebhookTests(TestCase):
         self.wallet.refresh_from_db()
         self.assertEqual(tx.status, 'SUCCESSFUL')
         self.assertEqual(float(self.wallet.balance), 2500.0)
+        mock_notify.assert_called_once()

@@ -43,7 +43,7 @@ class Transaction(models.Model):
     
     # Payment Details
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
-    payment_currency = models.CharField(max_length=10, blank=True, null=True) # e.g. 'NGN', 'USDT'
+    payment_currency = models.CharField(max_length=10, blank=True, null=True) # e.g. 'NGN', 'USD'
     external_reference = models.CharField(max_length=100, blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
