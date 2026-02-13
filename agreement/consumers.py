@@ -116,6 +116,10 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             converted = await self.get_converted_amounts_async(offer_dict['amount'], agreement.currency)
             offer_dict['amount_usd'] = converted['amount_usd']
             offer_dict['amount_ngn'] = converted['amount_ngn']
+            if agreement.currency == 'USD':
+                offer_dict['amount'] = offer_dict['amount_ngn']
+            else:
+                offer_dict['amount'] = offer_dict['amount_ngn']
             
         # Construct response with offer object
         response_data = {
@@ -154,7 +158,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     'type': 'agreement_updated',
                     'status': result['agreement_status'],
                     'activeOfferId': result['active_offer_id'],
-                    'amount': result['amount'],
+                    'amount': converted.get('amount_ngn') or result['amount'],
                     'timeline': result['timeline'],
                     'securedAt': result['secured_at'].isoformat() if result['secured_at'] else None,
                     'completedAt': result['completed_at'].isoformat() if result['completed_at'] else None
@@ -228,7 +232,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     'type': 'agreement_updated',
                     'status': agreement.status,
                     'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
-                    'amount': float(agreement.amount) if agreement.amount else None,
+                    'amount': (converted.get('amount_ngn') or float(agreement.amount)) if agreement.amount else None,
                     'amount_usd': converted['amount_usd'],
                     'amount_ngn': converted['amount_ngn'],
                     'timeline': agreement.timeline,
@@ -496,7 +500,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 'offer_id': offer.id,
                 'agreement_status': agreement.status,
                 'offer_status': offer.status,
-                'amount': float(agreement.amount) if agreement.amount else None,
+                'amount': converted.get('amount_ngn') or float(agreement.amount) if agreement.amount else None,
                 'timeline': agreement.timeline,
                 'secured_at': agreement.secured_at,
                 'completed_at': agreement.completed_at,

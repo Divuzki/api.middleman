@@ -48,8 +48,10 @@ def get_converted_amounts(amount, currency):
     if currency == 'USD':
         result['amount_usd'] = float(amount_dec)
         result['amount_ngn'] = float(round(amount_dec * usd_rate, 2))
+        result['amount'] = float(round(amount_dec * usd_rate, 2))
     else:
         # Default to NGN for 'NGN' or any other/unknown currency
+        result['amount'] = float(amount_dec)
         result['amount_ngn'] = float(amount_dec)
         if usd_rate > 0:
             result['amount_usd'] = float(round(amount_dec / usd_rate, 2))

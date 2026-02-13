@@ -42,7 +42,7 @@ class AgreementService:
                 Transaction.objects.create(
                     wallet=buyer_wallet,
                     title=f"Escrow Lock: {agreement.title}",
-                    amount=offer.amount,
+                    amount=converted.get('amount_ngn') or offer.amount,
                     amount_usd=converted.get('amount_usd'),
                     amount_ngn=converted.get('amount_ngn'),
                     transaction_type='TRANSFER',
@@ -53,9 +53,9 @@ class AgreementService:
                 )
                 
                 # Update Agreement
-                agreement.amount = offer.amount
-                agreement.amount_usd = offer.amount_usd
-                agreement.amount_ngn = offer.amount_ngn
+                agreement.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
+                agreement.amount_usd = converted.get('amount_usd') or offer.amount_usd
+                agreement.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
                 agreement.timeline = offer.timeline
                 agreement.status = 'active'
                 agreement.secured_at = timezone.now()
@@ -99,7 +99,7 @@ class AgreementService:
             Transaction.objects.create(
                 wallet=seller_wallet,
                 title=f"Escrow Release: {agreement.title}",
-                amount=agreement.amount,
+                amount=converted.get('amount_ngn') or agreement.amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='TRANSFER',
@@ -180,9 +180,9 @@ class AgreementService:
         """
         Locks terms of an agreement based on an offer.
         """
-        agreement.amount = offer.amount
-        agreement.amount_usd = offer.amount_usd
-        agreement.amount_ngn = offer.amount_ngn
+        agreement.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
+        agreement.amount_usd = converted.get('amount_usd') or offer.amount_usd
+        agreement.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
         agreement.timeline = offer.timeline
         agreement.status = 'terms_locked'
         agreement.terms_locked_at = timezone.now()

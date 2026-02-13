@@ -35,7 +35,7 @@ class WagerService:
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Stake: {serializer.validated_data.get('title', 'Untitled')}",
-                amount=amount,
+                amount=converted.get('amount_ngn') or amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WAGER_PAYMENT',
@@ -61,7 +61,7 @@ class WagerService:
                 Transaction.objects.create(
                     wallet=wallet,
                     title="Wager Stake Reversal",
-                    amount=amount,
+                    amount=converted.get('amount_ngn') or amount,
                     amount_usd=converted.get('amount_usd'),
                     amount_ngn=converted.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',
@@ -97,7 +97,7 @@ class WagerService:
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Join: {wager.title}",
-                amount=amount,
+                amount=converted.get('amount_ngn') or amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WAGER_PAYMENT',
@@ -122,7 +122,7 @@ class WagerService:
                 Transaction.objects.create(
                     wallet=wallet,
                     title="Wager Join Reversal",
-                    amount=amount,
+                    amount=converted.get('amount_ngn') or amount,
                     amount_usd=converted.get('amount_usd'),
                     amount_ngn=converted.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',

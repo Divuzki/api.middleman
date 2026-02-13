@@ -49,7 +49,7 @@ class DepositView(APIView):
             tx = Transaction.objects.create(
                 wallet=wallet,
                 title="Deposit",
-                amount=amount,
+                amount=converted.get('amount_ngn') or amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='DEPOSIT',
@@ -182,7 +182,7 @@ class WithdrawalView(APIView):
             Transaction.objects.create(
                 wallet=wallet,
                 title="Withdrawal",
-                amount=amount,
+                amount=converted.get('amount_ngn') or amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WITHDRAWAL',
