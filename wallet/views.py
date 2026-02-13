@@ -17,10 +17,10 @@ from .models import Wallet, Transaction
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
 from users.notifications import notify_balance_update
 from .utils import (
-    KorapayClient, 
+    TransactPayClient, 
     NOWPaymentsClient, 
     verify_nowpayments_signature,
-    KORAPAY_FEE_PERCENTAGE,
+    TRANSACTPAY_FEE_PERCENTAGE,
     NOWPAYMENTS_FEE_PERCENTAGE
 )
 from django.conf import settings
@@ -66,19 +66,21 @@ class DepositView(APIView):
             
             try:
                 if currency == 'NGN':
-                    # Korapay Logic
-                    gateway_fee = float(amount) * KORAPAY_FEE_PERCENTAGE + 100
+                    # TransactPay Logic
+                    gateway_fee = float(amount) * TRANSACTPAY_FEE_PERCENTAGE + 100
                     total_amount = float(amount) + gateway_fee
                     
-                    tx.payment_method = 'KORAPAY'
+                    tx.payment_method = 'TRANSACTPAY'
                     tx.payment_currency = 'NGN'
                     tx.save()
                     
-                    client = KorapayClient()
+                    client = TransactPayClient()
                     result = client.initialize_payment(ref, total_amount, request.user.email, redirect_url)
                     
                     if result and result.get('status') and result.get('data'):
-                        payment_link = result['data']['checkout_url']
+                        # Assuming TransactPay returns payment URL in 'data.payment_url' or similar
+                        # Adjust based on actual API response structure
+                        payment_link = result['data'].get('payment_url') or result['data'].get('checkout_url')
                         
                 elif currency == 'USD':
                     # NOWPayments Logic
@@ -243,8 +245,8 @@ class VerifyDepositView(GenericAPIView):
         # Verification Logic
         success = False
         
-        if tx.payment_method == 'KORAPAY':
-            client = KorapayClient()
+        if tx.payment_method == 'TRANSACTPAY':
+            client = TransactPayClient()
             data = client.verify_payment(reference)
             if data and data.get('status') and data.get('data', {}).get('status') == 'success':
                  success = True
@@ -306,11 +308,12 @@ class VerifyDepositView(GenericAPIView):
             }
         }, status=status.HTTP_200_OK)
 
-class KorapayWebhookView(APIView):
+class TransactPayWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
         data = request.data
+        # Assuming TransactPay sends reference in payload
         reference = data.get('reference') or data.get('data', {}).get('reference')
         if not reference:
             return Response({"status": "error"}, status=status.HTTP_400_BAD_REQUEST)
@@ -320,7 +323,8 @@ class KorapayWebhookView(APIView):
             return Response({"status": "error"}, status=status.HTTP_404_NOT_FOUND)
         if tx.status == 'SUCCESSFUL':
             return Response({"status": "success"}, status=status.HTTP_200_OK)
-        client = KorapayClient()
+        
+        client = TransactPayClient()
         verification = client.verify_payment(reference)
         success = False
         if verification and verification.get('status') and verification.get('data', {}).get('status') == 'success':

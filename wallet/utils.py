@@ -10,58 +10,93 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 # Fee Constants (2026)
-KORAPAY_FEE_PERCENTAGE = 0.015  # 1.5%
+TRANSACTPAY_FEE_PERCENTAGE = 0.015  # 1.5%
 NOWPAYMENTS_FEE_PERCENTAGE = 0.005  # 0.5%
 
-class KorapayClient:
-    BASE_URL = "https://api.korapay.com/merchant/api/v1"
+class TransactPayClient:
+    BASE_URL = "http://payment-api-service.transactpay.ai/payment" # Sandbox Base URL
 
     def __init__(self):
-        self.public_key = settings.KORAPAY_PUBLIC_KEY
-        self.secret_key = settings.KORAPAY_SECRET_KEY
+        self.api_key = settings.TRANSACTPAY_API_KEY
+        self.secret_key = settings.TRANSACTPAY_SECRET_KEY
         self.headers = {
-            "Authorization": f"Bearer {self.secret_key}",
+            "api-key": self.api_key,
             "Content-Type": "application/json"
         }
 
     def initialize_payment(self, reference, amount, email, redirect_url):
         """
-        Initialize a payment with Korapay.
+        Initialize a payment with TransactPay.
+        Uses the /invoice endpoint as suggested by documentation snippets.
         """
-        url = f"{self.BASE_URL}/charges/initialize"
+        url = f"{self.BASE_URL}/invoice"
         payload = {
             "reference": reference,
             "amount": float(amount),
             "currency": "NGN",
-            "customer": {
-                "email": email
-            },
+            "email": email,
             "redirect_url": redirect_url,
-            "notification_url": settings.KORAPAY_WEBHOOK_URL
+            "webhook_url": settings.TRANSACTPAY_WEBHOOK_URL
         }
 
         try:
             response = requests.post(url, json=payload, headers=self.headers, timeout=10)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            if data.get("status"):
+                return data
+            else:
+                logger.error(f"TransactPay error: {data.get('message')}")
+                return None
         except requests.RequestException as e:
-            logger.error(f"Korapay initialization error: {str(e)}")
+            logger.error(f"TransactPay initialization error: {str(e)}")
             if e.response:
-                logger.error(f"Korapay response: {e.response.text}")
+                logger.error(f"TransactPay response: {e.response.text}")
             return None
 
     def verify_payment(self, reference):
         """
-        Verify a payment with Korapay.
+        Verify a payment with TransactPay.
         """
-        url = f"{self.BASE_URL}/charges/{reference}"
+        url = f"{self.BASE_URL}/verify/{reference}"
         try:
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
-            logger.error(f"Korapay verification error: {str(e)}")
+            logger.error(f"TransactPay verification error: {str(e)}")
             return None
+
+    def get_banks(self):
+        """
+        Get list of banks.
+        """
+        url = f"{self.BASE_URL}/banks"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"TransactPay get banks error: {str(e)}")
+            return None
+
+    def resolve_account_number(self, bank_code, account_number):
+        """
+        Resolve bank account number.
+        """
+        url = f"{self.BASE_URL}/resolve-account"
+        payload = {
+            "bank_code": bank_code,
+            "account_number": account_number
+        }
+        try:
+            response = requests.post(url, json=payload, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"TransactPay resolve account error: {str(e)}")
+            return None
+
 
 class NOWPaymentsClient:
     BASE_URL = "https://api.nowpayments.io/v1"

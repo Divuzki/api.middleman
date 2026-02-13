@@ -25,7 +25,7 @@ class Transaction(models.Model):
     ]
 
     PAYMENT_METHOD_CHOICES = [
-        ('KORAPAY', 'Korapay (Naira)'),
+        ('TRANSACTPAY', 'TransactPay (Naira)'),
         ('NOWPAYMENTS', 'NOWPayments (Crypto)'),
     ]
 

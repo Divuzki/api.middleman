@@ -18,6 +18,7 @@ from .emails import send_otp_email
 import requests
 import random
 import uuid
+from wallet.utils import TransactPayClient
 from django.conf import settings
 from django.core.cache import cache
 
@@ -94,26 +95,18 @@ class BankListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-#         curl --location 'https://api.korapay.com/merchant/api/v1/misc/banks?countryCode=NG' \
-# --header 'Authorization: Bearer pk_***' \
-# --header 'Content-Type: application/json' \
-# --data ''
-        
         banks = [
             { "code": "011", "name": "First Bank of Nigeria" },
             { "code": "058", "name": "Guaranty Trust Bank" },
             { "code": "033", "name": "United Bank for Africa" }
         ]
-        # get list of banks from korapay api
-        response = requests.get(
-            "https://api.korapay.com/merchant/api/v1/misc/banks?countryCode=NG",
-            headers={
-                "Authorization": f"Bearer {settings.KORAPAY_PUBLIC_KEY}",
-                "Content-Type": "application/json"
-            }
-        )
-        if response.status_code == 200:
-            banks = response.json().get("data", [])
+        # get list of banks from transactpay api
+        client = TransactPayClient()
+        response_data = client.get_banks()
+        
+        if response_data and response_data.get("status"):
+            banks = response_data.get("data", [])
+            
         return Response({
             "status": "success",
             "data": banks
@@ -168,27 +161,16 @@ class VerifyBankAccountView(GenericAPIView):
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            #             curl --location 'https://api.korapay.com/merchant/api/v1/misc/banks/resolve' \
-            # --header 'Content-Type: application/json' \
-            # --data '{
-            # 	"bank": "033",
-            # 	"account": "2158634852"
-            # }'
-            # Call Korapay API to verify bank account
-            response = requests.post(
-                "https://api.korapay.com/merchant/api/v1/misc/banks/resolve",
-                headers={
-                    "Authorization": f"Bearer {settings.KORAPAY_SECRET_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "bank": serializer.validated_data['bankCode'],
-                    "account": serializer.validated_data['accountNumber']
-                }
+            # Call TransactPay API to verify bank account
+            client = TransactPayClient()
+            response_data = client.resolve_account_number(
+                bank_code=serializer.validated_data['bankCode'],
+                account_number=serializer.validated_data['accountNumber']
             )
+
             # Check if response is successful
-            if response.status_code == 200:
-                data = response.json().get("data", {})
+            if response_data and response_data.get("status"):
+                data = response_data.get("data", {})
                 return Response({
                     "status": "success",
                     "valid": True,
@@ -199,7 +181,7 @@ class VerifyBankAccountView(GenericAPIView):
                     "status": "error",
                     "valid": False,
                     "message": "Could not resolve account name"
-                }, status=response.status_code)
+                }, status=status.HTTP_400_BAD_REQUEST)
         return Response({
             "status": "error",
             "valid": False,

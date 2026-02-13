@@ -37,12 +37,12 @@ DEBUG = os.getenv("DEBUG", "True") == "True"
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
 
 USE_R2 = os.getenv("USE_R2", "False") == "True"
-KORAPAY_PUBLIC_KEY = os.getenv("KORAPAY_PUBLIC_KEY")
-KORAPAY_SECRET_KEY = os.getenv("KORAPAY_SECRET_KEY")
+TRANSACTPAY_API_KEY = os.getenv("TRANSACTPAY_API_KEY")
+TRANSACTPAY_SECRET_KEY = os.getenv("TRANSACTPAY_SECRET_KEY")
 NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 NOWPAYMENTS_SANDBOX_MODE = os.getenv("NOWPAYMENTS_SANDBOX_MODE", "False") == "True"
 NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
-KORAPAY_WEBHOOK_URL = os.getenv("KORAPAY_WEBHOOK_URL", "https://api.midman.app/webhooks/korapay/")
+TRANSACTPAY_WEBHOOK_URL = os.getenv("TRANSACTPAY_WEBHOOK_URL", "https://api.midman.app/webhooks/transactpay/")
 NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midman.app/webhooks/nowpayments/")
 
 
