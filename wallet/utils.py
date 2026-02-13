@@ -111,7 +111,7 @@ class NOWPaymentsClient:
             "Content-Type": "application/json"
         }
 
-    def create_invoice(self, order_id, price_amount, pay_currency="trx", price_currency="ngn", success_url=None, cancel_url=None):
+    def create_invoice(self, order_id, price_amount, pay_currency="USDTBSC", price_currency="ngn", success_url=None, cancel_url=None):
         """
         Create an invoice on NOWPayments.
         price_amount: Amount in Fiat/Crypto
@@ -143,7 +143,7 @@ class NOWPaymentsClient:
                 logger.error(f"NOWPayments response: {e.response.text}")
             return None
 
-    def create_payment(self, order_id, price_amount, pay_currency="trx", price_currency="usd"):
+    def create_payment(self, order_id, price_amount, pay_currency="USDTBSC", price_currency="usd"):
         """
         Create a payment on NOWPayments (Direct Payment).
         """

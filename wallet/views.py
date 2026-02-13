@@ -96,7 +96,7 @@ class DepositView(APIView):
                     result = client.create_payment(
                         ref, 
                         total_amount, 
-                        pay_currency="trx",
+                        pay_currency="USDTBSC",
                         price_currency="usd"
                     )
                     

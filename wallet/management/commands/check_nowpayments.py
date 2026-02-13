@@ -34,7 +34,7 @@ class Command(BaseCommand):
                 order_id=ref,
                 price_amount=10,
                 price_currency="usd",
-                pay_currency="trx"
+                pay_currency="USDTBSC"
             )
             
             if result and result.get('invoice_url'):
