@@ -158,6 +158,7 @@ class NOWPaymentsClient:
             "is_fixed_rate": True,
             "is_fee_paid_by_user": True
         }
+        print(payload)
 
         try:
             logger.info(f"Creating NOWPayments payment with payload: {json.dumps(payload)}")

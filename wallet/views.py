@@ -84,8 +84,8 @@ class DepositView(APIView):
                         
                 elif currency == 'USD':
                     # NOWPayments Logic
-                    gateway_fee = float(amount) * NOWPAYMENTS_FEE_PERCENTAGE
-                    total_amount = float(amount) + gateway_fee
+                    gateway_fee = float(converted.get('amount_usd')) * NOWPAYMENTS_FEE_PERCENTAGE
+                    total_amount = float(converted.get('amount_usd')) + gateway_fee
                     
                     tx.payment_method = 'NOWPAYMENTS'
                     tx.payment_currency = 'USD' # Default crypto
