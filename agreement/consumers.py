@@ -1,6 +1,7 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 from firebase_admin import auth, messaging
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -146,20 +147,17 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         result = await self.process_offer_acceptance(self.user, self.agreement_id, offer_id, pin)
         
         if result['success']:
-            agreement = result['agreement']
-            offer = result['offer']
-            
             # Smart Dispatcher: Agreement Update (Critical)
             await self.notify_users(
                 event_type='agreement_updated',
                 payload={
                     'type': 'agreement_updated',
-                    'status': agreement.status,
-                    'activeOfferId': agreement.active_offer.id if agreement.active_offer else None,
-                    'amount': float(agreement.amount) if agreement.amount else None,
-                    'timeline': agreement.timeline,
-                    'securedAt': agreement.secured_at.isoformat() if agreement.secured_at else None,
-                    'completedAt': agreement.completed_at.isoformat() if agreement.completed_at else None
+                    'status': result['agreement_status'],
+                    'activeOfferId': result['active_offer_id'],
+                    'amount': result['amount'],
+                    'timeline': result['timeline'],
+                    'securedAt': result['secured_at'].isoformat() if result['secured_at'] else None,
+                    'completedAt': result['completed_at'].isoformat() if result['completed_at'] else None
                 },
                 push_title="Agreement Active",
                 push_body=f"Offer accepted and funds locked. Work can begin.",
@@ -171,21 +169,24 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 event_type='offer_updated',
                 payload={
                     'type': 'offer_updated',
-                    'offerId': offer.id,
-                    'status': offer.status
+                    'offerId': result['offer_id'],
+                    'status': result['offer_status']
                 },
                 push_title="Offer Accepted",
                 push_body="The offer has been accepted."
             )
 
             # Notifications
+            is_buyer = (self.user.id == result['buyer_id'])
+            is_seller = (self.user.id == result['seller_id'])
+            
             if is_buyer:
                 await self.send_user_notification(self.user.id, 'balance')
                 await self.send_user_notification(self.user.id, 'badge')
-                await self.send_user_notification(agreement.seller_id, 'badge')
+                await self.send_user_notification(result['seller_id'], 'badge')
             elif is_seller:
                 await self.send_user_notification(self.user.id, 'badge')
-                await self.send_user_notification(agreement.buyer_id, 'badge')
+                await self.send_user_notification(result['buyer_id'], 'badge')
 
     async def handle_offer_rejected(self, data):
         offer_id = data.get('offerId')
@@ -488,7 +489,21 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             offer = AgreementOffer.objects.get(id=offer_id, agreement=agreement)
             
             agreement, offer = AgreementService.accept_offer(user, agreement, offer, pin)
-            return {'success': True, 'agreement': agreement, 'offer': offer}
+            # Return IDs instead of objects to avoid potential async/sync issues with model instances
+            return {
+                'success': True, 
+                'agreement_id': agreement.id, 
+                'offer_id': offer.id,
+                'agreement_status': agreement.status,
+                'offer_status': offer.status,
+                'amount': float(agreement.amount) if agreement.amount else None,
+                'timeline': agreement.timeline,
+                'secured_at': agreement.secured_at,
+                'completed_at': agreement.completed_at,
+                'active_offer_id': agreement.active_offer_id,
+                'buyer_id': agreement.buyer_id,
+                'seller_id': agreement.seller_id
+            }
         except Exception as e:
             logger.error(f"Error processing offer acceptance: {e}")
             return {'success': False, 'error': str(e)}

@@ -317,12 +317,12 @@ class WebSocketTests(TestCase):
         }
         
         # Setup wallet and offer
-        async def _set_balance(user_id, amount):
+        def _set_balance(user_id, amount):
             w = Wallet.objects.get(user_id=user_id)
             w.balance = amount
             w.save()
         await database_sync_to_async(_set_balance)(self.user.id, 2000.0)
-        self.user.transaction_pin = '1234'
+        self.user.transaction_pin = make_password('1234')
         await database_sync_to_async(self.user.save)()
         
         offer = await database_sync_to_async(AgreementOffer.objects.create)(
@@ -345,9 +345,9 @@ class WebSocketTests(TestCase):
         
         # Expect updates
         # 1. Agreement update
-        response1 = await communicator.receive_json_from()
+        response1 = await communicator.receive_json_from(timeout=5)
         # 2. Offer update
-        response2 = await communicator.receive_json_from()
+        response2 = await communicator.receive_json_from(timeout=5)
         
         # Order might vary depending on implementation, but consumer calls agreement_update then offer_update
         self.assertEqual(response1['type'], 'agreement_updated')
