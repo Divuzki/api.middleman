@@ -19,12 +19,14 @@ class WagerService:
         amount = serializer.validated_data.get('amount')
         if amount is None:
             raise ValueError("Wager amount is required")
-        amount = Decimal(amount)
+        amount = Decimal(str(amount))
         if amount <= 0:
             raise ValueError("Amount must be greater than zero")
 
         with transaction.atomic(using='wallet_db'):
             wallet = Wallet.objects.select_for_update().get(user_id=user.id)
+            # Ensure amount is Decimal for calculation
+            amount = Decimal(str(amount))
             if wallet.balance < amount:
                 raise ValueError("Insufficient funds")
             wallet.balance -= amount

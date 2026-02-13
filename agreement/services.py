@@ -23,8 +23,7 @@ class AgreementService:
             if user.transaction_pin and not user.verify_pin(pin):
                 raise ValueError("Incorrect PIN")
             
-            # Atomic transaction for financial operations
-            with transaction.atomic():
+            with transaction.atomic(using='wallet_db'):
                 try:
                     # Lock rows to prevent race conditions
                     buyer_wallet = Wallet.objects.select_for_update().get(user_id=user.id)
@@ -85,7 +84,7 @@ class AgreementService:
         if agreement.status != 'delivered':
              raise ValueError("Agreement must be delivered to confirm")
 
-        with transaction.atomic():
+        with transaction.atomic(using='wallet_db'):
             try:
                 seller_wallet = Wallet.objects.select_for_update().get(user_id=agreement.seller.id)
             except Wallet.DoesNotExist:

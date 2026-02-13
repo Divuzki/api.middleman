@@ -2,6 +2,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
 from .models import Agreement, AgreementOffer
 from wallet.models import Wallet, Transaction
 from channels.testing import WebsocketCommunicator
@@ -13,7 +14,7 @@ from unittest.mock import patch
 User = get_user_model()
 
 class AgreementTests(TestCase):
-    databases = {'default', 'agreement_db', 'wallet_db'}
+    databases = {'default', 'agreement_db', 'wallet_db', 'wager_db'}
 
     def setUp(self):
         self.client = APIClient()
@@ -27,8 +28,9 @@ class AgreementTests(TestCase):
         )
         self.client.force_authenticate(user=self.user)
         
-        # Create wallet for user
-        self.wallet = Wallet.objects.create(user_id=self.user.id, balance=10000.00)
+        self.wallet = Wallet.objects.get(user_id=self.user.id)
+        self.wallet.balance = 10000.00
+        self.wallet.save()
 
     def test_create_agreement(self):
         data = {
@@ -132,12 +134,16 @@ class AgreementTests(TestCase):
         )
         
         # Another user as buyer
-        buyer = User.objects.create_user(email='buyer@test.com', password='pw', firebase_uid='uid_buy', transaction_pin='1234')
+        buyer = User.objects.create_user(email='buyer@test.com', password='pw', firebase_uid='uid_buy')
         agreement.buyer = buyer
         agreement.save()
         
-        # Create wallet for buyer
-        buyer_wallet = Wallet.objects.create(user_id=buyer.id, balance=500.00)
+        buyer_wallet = Wallet.objects.get(user_id=buyer.id)
+        buyer_wallet.balance = 500.00
+        buyer_wallet.save()
+        buyer.transaction_pin = make_password('1234')
+        buyer.has_set_account_pin = True
+        buyer.save()
         
         self.client.force_authenticate(user=buyer)
         
@@ -174,13 +180,18 @@ class AgreementTests(TestCase):
             initiator=self.user, seller=self.user, buyer=self.user,
             status='active', creator_role='seller'
         )
+        agreement.amount = 100.00
+        agreement.save()
+        
+        response_deliver = self.client.post(f'/agreements/{agreement.id}/deliver/')
+        self.assertEqual(response_deliver.status_code, status.HTTP_200_OK)
         
         response = self.client.post(f'/agreements/{agreement.id}/complete/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         agreement.refresh_from_db()
-        self.assertEqual(agreement.status, 'delivered')
-        self.assertIsNotNone(agreement.delivered_at)
+        self.assertEqual(agreement.status, 'completed')
+        self.assertIsNotNone(agreement.completed_at)
 
     def test_confirm_agreement(self):
         agreement = Agreement.objects.create(
@@ -198,7 +209,7 @@ class AgreementTests(TestCase):
         agreement.seller = seller
         agreement.save()
         
-        seller_wallet = Wallet.objects.create(user_id=seller.id, balance=0.00)
+        seller_wallet = Wallet.objects.get(user_id=seller.id)
         
         response = self.client.post(f'/agreements/{agreement.id}/confirm/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -232,7 +243,7 @@ class AgreementTests(TestCase):
         self.assertEqual(offer.status, 'rejected')
 
 class WebSocketTests(TestCase):
-    databases = {'default', 'agreement_db', 'wallet_db'}
+    databases = {'default', 'agreement_db', 'wallet_db', 'wager_db'}
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -306,7 +317,11 @@ class WebSocketTests(TestCase):
         }
         
         # Setup wallet and offer
-        await database_sync_to_async(Wallet.objects.create)(user_id=self.user.id, balance=2000.0)
+        async def _set_balance(user_id, amount):
+            w = Wallet.objects.get(user_id=user_id)
+            w.balance = amount
+            w.save()
+        await database_sync_to_async(_set_balance)(self.user.id, 2000.0)
         self.user.transaction_pin = '1234'
         await database_sync_to_async(self.user.save)()
         
@@ -366,8 +381,7 @@ class WebSocketTests(TestCase):
         self.agreement.seller = seller
         await database_sync_to_async(self.agreement.save)()
         
-        # Seller wallet
-        seller_wallet = await database_sync_to_async(Wallet.objects.create)(user_id=seller.id, balance=0.0)
+        seller_wallet = await database_sync_to_async(Wallet.objects.get)(user_id=seller.id)
         
         communicator = WebsocketCommunicator(
             application, 

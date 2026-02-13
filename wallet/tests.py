@@ -51,9 +51,9 @@ class DepositFlowTests(TestCase):
         self.user = User.objects.create_user(email='user@example.com', password='password')
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        self.wallet = Wallet.objects.get(user_id=self.user.id)
 
-    @patch('wallet.views.KorapayClient.initialize_payment')
+    @patch('wallet.views.TransactPayClient.initialize_payment')
     def test_initiate_deposit_korapay(self, mock_init):
         mock_init.return_value = {
             'status': True,
@@ -67,12 +67,15 @@ class DepositFlowTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['payment_url'], 'https://checkout.korapay.com/xyz')
         self.assertEqual(response.data['currency'], 'NGN')
-        self.assertTrue(Transaction.objects.filter(payment_method='KORAPAY').exists())
+        self.assertTrue(Transaction.objects.filter(payment_method='TRANSACTPAY').exists())
 
-    @patch('wallet.views.NOWPaymentsClient.create_invoice')
+    @patch('wallet.views.NOWPaymentsClient.create_payment')
     def test_initiate_deposit_nowpayments(self, mock_create):
         mock_create.return_value = {
-            'invoice_url': 'https://nowpayments.io/payment/xyz'
+            'pay_address': 'TXYZ123',
+            'pay_amount': 101.5,
+            'pay_currency': 'trx',
+            'payment_id': 'pid_123'
         }
 
         url = reverse('deposit')
@@ -80,16 +83,16 @@ class DepositFlowTests(TestCase):
         response = self.client.post(url, data)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['payment_url'], 'https://nowpayments.io/payment/xyz')
         self.assertEqual(response.data['currency'], 'USD')
+        self.assertEqual(response.data['pay_currency'], 'trx')
         self.assertTrue(Transaction.objects.filter(payment_method='NOWPAYMENTS').exists())
 
     @patch('wallet.views.notify_balance_update')
-    @patch('wallet.views.KorapayClient.verify_payment')
+    @patch('wallet.views.TransactPayClient.verify_payment')
     def test_verify_korapay_deposit(self, mock_verify, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=5000, reference='ref_789', 
-            status='PENDING', payment_method='KORAPAY'
+            status='PENDING', payment_method='TRANSACTPAY'
         )
         
         mock_verify.return_value = {
@@ -113,7 +116,7 @@ class WebhookTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(email='hook@example.com', password='password')
         self.client = APIClient()
-        self.wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        self.wallet = Wallet.objects.get(user_id=self.user.id)
         settings.NOWPAYMENTS_IPN_SECRET = 'testsecret'
 
     def _sign_nowpayments(self, message):
@@ -190,17 +193,17 @@ class WebhookTests(TestCase):
         mock_notify.assert_called_once()
 
     @patch('wallet.views.notify_balance_update')
-    @patch('wallet.views.KorapayClient.verify_payment')
+    @patch('wallet.views.TransactPayClient.verify_payment')
     def test_korapay_webhook_success(self, mock_verify, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=2500, reference='ref_kp_ok', status='PENDING',
-            payment_method='KORAPAY', payment_currency='NGN'
+            payment_method='TRANSACTPAY', payment_currency='NGN'
         )
         mock_verify.return_value = {
             "status": True,
             "data": {"status": "success"}
         }
-        url = reverse('korapay-webhook')
+        url = reverse('transactpay-webhook')
         response = self.client.post(url, data={"reference": "ref_kp_ok"}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         tx.refresh_from_db()

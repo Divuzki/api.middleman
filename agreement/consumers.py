@@ -13,6 +13,7 @@ from users.notifications import get_balance_data, get_badge_counts_data
 from .services import AgreementService
 import logging
 import uuid
+from middleman_api.utils import get_converted_amounts
 
 logger = logging.getLogger(__name__)
 User = get_user_model()

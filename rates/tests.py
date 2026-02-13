@@ -7,6 +7,7 @@ from users.models import User
 from unittest.mock import patch
 
 class RateTests(TestCase):
+    databases = {'default', 'wallet_db'}
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(email='test@example.com', password='password123')
