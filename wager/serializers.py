@@ -46,7 +46,7 @@ class WagerSerializer(serializers.ModelSerializer):
 
     def get_drawRequestedBy(self, obj):
         if obj.drawRequestedBy:
-            return obj.drawRequestedBy.id
+            return obj.drawRequestedBy.firebase_uid
         return None
 
     def validate_endDate(self, value):
