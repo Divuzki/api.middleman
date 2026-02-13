@@ -1,3 +1,4 @@
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from fcm_django.models import FCMDevice
@@ -55,6 +56,9 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+    def verify_pin(self, pin):
+        return make_password(pin) == self.transaction_pin
 
 
 class PayoutAccount(models.Model):

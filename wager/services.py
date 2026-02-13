@@ -14,7 +14,7 @@ class WagerService:
         """
         if not pin:
             raise ValueError("PIN is required to create a wager")
-        if user.transaction_pin and user.transaction_pin != pin:
+        if user.transaction_pin and not user.verify_pin(pin):
             raise ValueError("Incorrect PIN")
         
         amount = wager_data.get('amount')
@@ -78,7 +78,7 @@ class WagerService:
         """
         if not pin:
             raise ValueError("PIN is required to join a wager")
-        if user.transaction_pin and user.transaction_pin != pin:
+        if user.transaction_pin and not user.verify_pin(pin):
             raise ValueError("Incorrect PIN")
         
         # Validation

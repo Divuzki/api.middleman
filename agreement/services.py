@@ -20,7 +20,7 @@ class AgreementService:
         if is_buyer:
             if not pin:
                 raise ValueError("PIN required for buyer to accept/fund")
-            if user.transaction_pin and user.transaction_pin != pin:
+            if user.transaction_pin and not user.verify_pin(pin):
                 raise ValueError("Incorrect PIN")
             
             # Atomic transaction for financial operations

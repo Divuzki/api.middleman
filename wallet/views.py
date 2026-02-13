@@ -159,7 +159,7 @@ class WithdrawalView(APIView):
 
             # Verify PIN (using the User model in default DB)
             user = request.user
-            if not user.transaction_pin or not check_password(pin, user.transaction_pin):
+            if not user.transaction_pin or not user.verify_pin(pin):
                 return Response({
                     "status": "error",
                     "message": "Invalid PIN"
