@@ -29,47 +29,63 @@ class WagerService:
         if amount <= 0:
             raise ValueError("Amount must be greater than zero")
 
-        with transaction.atomic():
-            # 1. Lock and Debit Wallet
-            try:
-                wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-            except Wallet.DoesNotExist:
-                raise ValueError("Wallet not found")
+        serializer = WagerSerializer(data=wager_data)
+        serializer.is_valid(raise_exception=True)
 
-            if wallet.balance < amount:
-                raise ValueError("Insufficient funds")
+        from django.db import DatabaseError
 
-            wallet.balance -= amount
-            wallet.save()
+        try:
+            with transaction.atomic(using='wallet_db'):
+                try:
+                    wallet = Wallet.objects.select_for_update().get(user_id=user.id)
+                except Wallet.DoesNotExist:
+                    raise ValueError("Wallet not found")
 
-            # 2. Create Transaction
-            converted = get_converted_amounts(amount, wallet.currency)
-            Transaction.objects.create(
-                wallet=wallet,
-                title=f"Wager Stake: {wager_data.get('title', 'Untitled')}",
-                amount=amount,
-                amount_usd=converted.get('amount_usd'),
-                amount_ngn=converted.get('amount_ngn'),
-                transaction_type='DEBIT',
-                category='Wager Stake',
-                status='SUCCESSFUL',
-                reference=f"wager_stake_{uuid.uuid4().hex[:12]}",
-                description=f"Stake for wager creation"
-            )
+                if wallet.balance < amount:
+                    raise ValueError("Insufficient funds")
 
-            # 3. Create Wager
-            # Remove pin from data if present to avoid errors in serializer
+                wallet.balance -= amount
+                wallet.save()
+
+                converted = get_converted_amounts(amount, wallet.currency)
+                Transaction.objects.create(
+                    wallet=wallet,
+                    title=f"Wager Stake: {wager_data.get('title', 'Untitled')}",
+                    amount=amount,
+                    amount_usd=converted.get('amount_usd'),
+                    amount_ngn=converted.get('amount_ngn'),
+                    transaction_type='WAGER_PAYMENT',
+                    category='Wager Stake',
+                    status='SUCCESSFUL',
+                    reference=f"wager_stake_{uuid.uuid4().hex[:12]}",
+                    description=f"Stake for wager creation"
+                )
+
             if 'pin' in wager_data:
                 del wager_data['pin']
-                
-            serializer = WagerSerializer(data=wager_data)
-            if serializer.is_valid(raise_exception=True):
+
+            with transaction.atomic(using='wager_db'):
                 wager = serializer.save(creator=user)
-                
-                # Add transaction reference to description or metadata if needed?
-                # For now, just linking via ID in transaction description is enough.
-                
                 return wager
+        except DatabaseError:
+            with transaction.atomic(using='wallet_db'):
+                wallet = Wallet.objects.get(user_id=user.id)
+                wallet.balance += amount
+                wallet.save()
+                converted = get_converted_amounts(amount, wallet.currency)
+                Transaction.objects.create(
+                    wallet=wallet,
+                    title="Wager Stake Reversal",
+                    amount=amount,
+                    amount_usd=converted.get('amount_usd'),
+                    amount_ngn=converted.get('amount_ngn'),
+                    transaction_type='WAGER_PAYMENT',
+                    category='Reversal',
+                    status='SUCCESSFUL',
+                    reference=f"wager_refund_{uuid.uuid4().hex[:12]}",
+                    description="Reversal for failed wager creation"
+                )
+            raise
             
     @staticmethod
     def join_wager(user, wager, pin=None):
@@ -90,37 +106,56 @@ class WagerService:
             
         amount = float(wager.amount)
 
-        with transaction.atomic():
-            # 1. Lock and Debit Wallet
-            try:
-                wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-            except Wallet.DoesNotExist:
-                raise ValueError("Wallet not found")
+        from django.db import DatabaseError
 
-            if wallet.balance < amount:
-                raise ValueError("Insufficient funds")
+        try:
+            with transaction.atomic(using='wallet_db'):
+                try:
+                    wallet = Wallet.objects.select_for_update().get(user_id=user.id)
+                except Wallet.DoesNotExist:
+                    raise ValueError("Wallet not found")
 
-            wallet.balance -= amount
-            wallet.save()
+                if wallet.balance < amount:
+                    raise ValueError("Insufficient funds")
 
-            # 2. Create Transaction
-            converted = get_converted_amounts(amount, wallet.currency)
-            Transaction.objects.create(
-                wallet=wallet,
-                title=f"Wager Join: {wager.title}",
-                amount=amount,
-                amount_usd=converted.get('amount_usd'),
-                amount_ngn=converted.get('amount_ngn'),
-                transaction_type='DEBIT',
-                category='Wager Stake',
-                status='SUCCESSFUL',
-                reference=f"wager_join_{wager.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Stake for joining wager {wager.id}"
-            )
+                wallet.balance -= amount
+                wallet.save()
 
-            # 3. Update Wager
-            wager.opponent = user
-            wager.status = 'MATCHED'
-            wager.save()
+                converted = get_converted_amounts(amount, wallet.currency)
+                Transaction.objects.create(
+                    wallet=wallet,
+                    title=f"Wager Join: {wager.title}",
+                    amount=amount,
+                    amount_usd=converted.get('amount_usd'),
+                    amount_ngn=converted.get('amount_ngn'),
+                    transaction_type='WAGER_PAYMENT',
+                    category='Wager Stake',
+                    status='SUCCESSFUL',
+                    reference=f"wager_join_{wager.id}_{uuid.uuid4().hex[:8]}",
+                    description=f"Stake for joining wager {wager.id}"
+                )
 
-            return wager
+            with transaction.atomic(using='wager_db'):
+                wager.opponent = user
+                wager.status = 'MATCHED'
+                wager.save()
+                return wager
+        except DatabaseError:
+            with transaction.atomic(using='wallet_db'):
+                wallet = Wallet.objects.get(user_id=user.id)
+                wallet.balance += amount
+                wallet.save()
+                converted = get_converted_amounts(amount, wallet.currency)
+                Transaction.objects.create(
+                    wallet=wallet,
+                    title="Wager Join Reversal",
+                    amount=amount,
+                    amount_usd=converted.get('amount_usd'),
+                    amount_ngn=converted.get('amount_ngn'),
+                    transaction_type='WAGER_PAYMENT',
+                    category='Reversal',
+                    status='SUCCESSFUL',
+                    reference=f"wager_join_refund_{uuid.uuid4().hex[:8]}",
+                    description=f"Reversal for failed wager join {wager.id}"
+                )
+            raise
