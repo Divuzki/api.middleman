@@ -1,0 +1,1 @@
+# This file makes wallet/tests a package

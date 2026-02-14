@@ -269,17 +269,9 @@ class VerifyDepositView(GenericAPIView):
         if success:
              # Atomic update for balance and transaction status
              try:
-                with transaction.atomic(using='wallet_db'):
-                    # Refresh wallet to get latest balance
-                    wallet.refresh_from_db()
-                    
-                    # Update wallet balance
-                    wallet.balance += tx.amount
-                    wallet.save()
-
-                    # Update transaction status
-                    tx.status = 'SUCCESSFUL'
-                    tx.save()
+                # Update transaction status (Signal handles balance)
+                tx.status = 'SUCCESSFUL'
+                tx.save()
                     
                 # Notify user
                 notify_balance_update(request.user)
@@ -330,14 +322,12 @@ class TransactPayWebhookView(APIView):
         if verification and verification.get('status') and verification.get('data', {}).get('status') == 'success':
             success = True
         if success:
-            wallet = Wallet.objects.get(id=tx.wallet_id)
             try:
-                with transaction.atomic(using='wallet_db'):
-                    wallet.refresh_from_db()
-                    wallet.balance += tx.amount
-                    wallet.save()
-                    tx.status = 'SUCCESSFUL'
-                    tx.save()
+                tx.status = 'SUCCESSFUL'
+                tx.save()
+                
+                # Notify user
+                wallet = Wallet.objects.get(id=tx.wallet_id)
                 user = User.objects.get(id=wallet.user_id)
                 notify_balance_update(user)
             except Exception:
@@ -369,14 +359,12 @@ class NOWPaymentsWebhookView(APIView):
         if tx.payment_currency and pay_currency and tx.payment_currency.lower() != pay_currency.lower():
             return Response({"status": "pending"}, status=status.HTTP_200_OK)
         if payment_status in ['finished', 'confirmed', 'sending']:
-            wallet = Wallet.objects.get(id=tx.wallet_id)
             try:
-                with transaction.atomic(using='wallet_db'):
-                    wallet.refresh_from_db()
-                    wallet.balance += tx.amount
-                    wallet.save()
-                    tx.status = 'SUCCESSFUL'
-                    tx.save()
+                tx.status = 'SUCCESSFUL'
+                tx.save()
+                
+                # Notify user
+                wallet = Wallet.objects.get(id=tx.wallet_id)
                 user = User.objects.get(id=wallet.user_id)
                 notify_balance_update(user)
             except Exception:
