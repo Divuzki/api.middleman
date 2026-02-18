@@ -46,6 +46,9 @@ class User(AbstractUser):
     isIdentityVerified = models.BooleanField(default=False)
     verifiedAt = models.DateTimeField(blank=True, null=True)
 
+    currency_preference = models.CharField(max_length=3, choices=[('NGN', 'Nigerian Naira'), ('USD', 'US Dollar')], default='NGN')
+    hide_balance = models.BooleanField(default=False)
+
     has_set_account_pin = models.BooleanField(default=False)
     transaction_pin = models.CharField(max_length=128, blank=True, null=True)
 

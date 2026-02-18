@@ -62,7 +62,9 @@ class UserProfileUpdateView(GenericAPIView):
                     "email": user.email,
                     "firstName": user.first_name,
                     "lastName": user.last_name,
-                    "displayName": f"{user.first_name} {user.last_name}".strip()
+                    "displayName": f"{user.first_name} {user.last_name}".strip(),
+                    "currency_preference": user.currency_preference,
+                    "hide_balance": user.hide_balance
                 }
             }, status=status.HTTP_200_OK)
         return Response({

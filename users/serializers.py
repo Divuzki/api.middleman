@@ -32,10 +32,12 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     firstName = serializers.CharField(source='first_name', required=False)
     lastName = serializers.CharField(source='last_name', required=False)
     displayName = serializers.SerializerMethodField()
+    currency_preference = serializers.ChoiceField(choices=['NGN', 'USD'], required=False)
+    hide_balance = serializers.BooleanField(required=False)
     
     class Meta:
         model = User
-        fields = ['email', 'firstName', 'lastName', 'displayName']
+        fields = ['email', 'firstName', 'lastName', 'displayName', 'currency_preference', 'hide_balance']
 
     def get_displayName(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
