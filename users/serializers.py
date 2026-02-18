@@ -67,6 +67,11 @@ class PayoutAccountSerializer(serializers.ModelSerializer):
         model = PayoutAccount
         fields = ['id', 'type', 'currency', 'bankName', 'bankCode', 'accountNumber', 'accountName', 'walletAddress', 'network', 'createdAt']
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['id'] = f"acc_{instance.id}"
+        return ret
+
     def validate(self, data):
         type_ = data.get('type')
         if type_ == 'bank':

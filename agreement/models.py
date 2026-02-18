@@ -28,6 +28,7 @@ class Agreement(models.Model):
         ('secured', 'Secured'),
         ('delivered', 'Delivered'),
         ('completed', 'Completed'),
+        ('disputed', 'Disputed'),
         ('cancelled', 'Cancelled'),
     ]
 

@@ -8,6 +8,7 @@ from decimal import Decimal
 User = get_user_model()
 
 class WagerUserSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(source='firebase_uid', read_only=True)
     name = serializers.SerializerMethodField()
     avatar = serializers.CharField(source='image_url', read_only=True)
 
@@ -71,7 +72,7 @@ class WagerSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 class ChatMessageSerializer(serializers.ModelSerializer):
-    senderId = serializers.CharField(source='sender.id', read_only=True)
+    senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
     senderName = serializers.SerializerMethodField()
     type = serializers.CharField(source='message_type', read_only=True)
 

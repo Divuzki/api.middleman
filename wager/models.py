@@ -30,6 +30,7 @@ class Wager(models.Model):
         ('DRAW', 'Draw'),
         ('MATCHED', 'Matched'),
         ('COMPLETED', 'Completed'),
+        ('DISPUTED', 'Disputed'),
         ('CANCELLED', 'Cancelled'),
     ]
 

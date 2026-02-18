@@ -146,6 +146,20 @@ class PayoutAccountDeleteView(DestroyAPIView):
     def get_queryset(self):
         return PayoutAccount.objects.filter(user=self.request.user)
 
+    def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs[lookup_url_kwarg]
+        
+        # Strip prefix if present
+        if str(lookup_value).startswith('acc_'):
+            lookup_value = str(lookup_value).replace('acc_', '')
+            
+        filter_kwargs = {self.lookup_field: lookup_value}
+        obj = get_object_or_404(queryset, **filter_kwargs)
+        self.check_object_permissions(self.request, obj)
+        return obj
+
     def delete(self, request, *args, **kwargs):
         instance = self.get_object()
         self.perform_destroy(instance)
