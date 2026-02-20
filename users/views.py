@@ -15,6 +15,7 @@ from .serializers import (
 )
 from .serializers import DeviceProfileSerializer
 from .emails import send_otp_email
+from .notifications import send_device_logout_notification
 import requests
 import random
 import uuid
@@ -428,6 +429,9 @@ class DeviceDetailView(GenericAPIView):
         
         # Remove FCM association (stops notifications)
         if device.fcm_device:
+            # Send silent logout notification
+            send_device_logout_notification(device.fcm_device)
+
             device.fcm_device.delete()
             device.fcm_device = None
             device.save()
