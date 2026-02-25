@@ -29,13 +29,13 @@ class AgreementViewSet(viewsets.ModelViewSet):
         amount = self.request.data.get('amount')
         timeline = self.request.data.get('timeline')
         
-        if creator_role == 'seller' and amount and timeline:
+        if amount and timeline:
             # Create initial offer via service
             AgreementService.create_offer(
                 user=self.request.user,
                 agreement=agreement,
                 amount=amount,
-                description="Initial offer from seller",
+                description=f"Initial offer from {creator_role}",
                 timeline=timeline
             )
             # IMPORTANT: We need to ensure the serialized response includes this new offer.

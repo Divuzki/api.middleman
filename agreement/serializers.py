@@ -54,6 +54,7 @@ class AgreementSerializer(serializers.ModelSerializer):
     deliveryProof = serializers.JSONField(source='delivery_proof', read_only=True)
     initialOffer = serializers.SerializerMethodField()
     currency = serializers.CharField(max_length=10, default='NGN')
+    deliveryTimeline = serializers.CharField(source='timeline', read_only=True)
 
     class Meta:
         model = Agreement
@@ -62,7 +63,7 @@ class AgreementSerializer(serializers.ModelSerializer):
             'timeline', 'initiator', 'counterparty', 'buyerId', 'sellerId', 
             'creatorRole', 'terms', 'shareLink', 'date', 
             'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt', 'deliveryProof',
-            'initialOffer', 'activeOfferId'
+            'initialOffer', 'activeOfferId', 'deliveryTimeline'
         ]
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
 

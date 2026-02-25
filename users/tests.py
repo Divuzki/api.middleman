@@ -41,6 +41,23 @@ class AuthenticationTests(TestCase):
         self.assertEqual(user.last_name, 'User')
 
     @patch('users.authentication.auth.verify_id_token')
+    def test_authentication_response_fields(self, mock_verify):
+        """Test authentication response contains new fields."""
+        mock_verify.return_value = self.user_data
+        
+        token = 'valid_firebase_token'
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        
+        response = self.client.get(self.auth_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user_data = response.data['user']
+        self.assertIn('currency_preference', user_data)
+        self.assertIn('hide_balance', user_data)
+        self.assertEqual(user_data['currency_preference'], 'NGN') # Default
+        self.assertEqual(user_data['hide_balance'], False) # Default
+
+    @patch('users.authentication.auth.verify_id_token')
     def test_authentication_success_existing_user(self, mock_verify):
         """Test authentication with valid token returns existing user."""
         # Create user first

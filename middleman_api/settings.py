@@ -44,6 +44,7 @@ NOWPAYMENTS_SANDBOX_MODE = os.getenv("NOWPAYMENTS_SANDBOX_MODE", "False") == "Tr
 NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
 TRANSACTPAY_WEBHOOK_URL = os.getenv("TRANSACTPAY_WEBHOOK_URL", "https://api.midman.app/webhooks/transactpay/")
 NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midman.app/webhooks/nowpayments/")
+PAYMENT_REDIRECT_URL = os.getenv("PAYMENT_REDIRECT_URL", "https://midman.app/payment/callback")
 
 
 # Production Security Settings

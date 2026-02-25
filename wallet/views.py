@@ -62,7 +62,7 @@ class DepositView(APIView):
             # Determine Payment Method and Calculate Fees
             payment_link = None
             payment_details = None
-            redirect_url = "https://midman.app/payment/callback" 
+            redirect_url = settings.PAYMENT_REDIRECT_URL
             
             try:
                 if currency == 'NGN':
@@ -130,7 +130,10 @@ class DepositView(APIView):
                         
                     return Response(response_data, status=status.HTTP_200_OK)
                 else:
-                     return Response({
+                    tx.status = 'FAILED'
+                    tx.save()
+                    logger.error(f"Payment initialization failed for tx {ref}. Currency: {currency}")
+                    return Response({
                         "status": "error",
                         "message": "Failed to generate payment link"
                     }, status=status.HTTP_502_BAD_GATEWAY)
@@ -312,7 +315,8 @@ class TransactPayWebhookView(APIView):
         try:
             tx = Transaction.objects.get(reference=reference)
         except Transaction.DoesNotExist:
-            return Response({"status": "error"}, status=status.HTTP_404_NOT_FOUND)
+            logger.warning(f"TransactPay Webhook: Transaction not found for reference {reference}")
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
         if tx.status == 'SUCCESSFUL':
             return Response({"status": "success"}, status=status.HTTP_200_OK)
         
@@ -353,7 +357,8 @@ class NOWPaymentsWebhookView(APIView):
         try:
             tx = Transaction.objects.get(reference=order_id)
         except Transaction.DoesNotExist:
-            return Response({"status": "error"}, status=status.HTTP_404_NOT_FOUND)
+            logger.warning(f"NOWPayments Webhook: Transaction not found for order_id {order_id}")
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
         if tx.status == 'SUCCESSFUL':
             return Response({"status": "success"}, status=status.HTTP_200_OK)
         if tx.payment_currency and pay_currency and tx.payment_currency.lower() != pay_currency.lower():

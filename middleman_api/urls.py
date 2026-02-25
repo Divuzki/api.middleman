@@ -11,5 +11,6 @@ urlpatterns = [
     path('', include('wallet.urls')),
     path('', include('wager.urls')),
     path('', include('agreement.urls')),
+    path('rates', include('rates.urls')),
     path('rates/', include('rates.urls')),
 ]
