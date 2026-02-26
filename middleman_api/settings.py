@@ -404,8 +404,14 @@ else:
     print("Warning: FIREBASE_CREDENTIALS_PATH not set. Firebase Admin not initialized.")
 
 # CORS Settings
+from corsheaders.defaults import default_headers
+
 CORS_ALLOW_ALL_ORIGINS = True  # Relaxing for development
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-device-uuid',
+]
 
 if not CORS_ALLOW_ALL_ORIGINS:
     # In production, we must specify allowed origins
