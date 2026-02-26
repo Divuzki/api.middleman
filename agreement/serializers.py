@@ -55,6 +55,7 @@ class AgreementSerializer(serializers.ModelSerializer):
     initialOffer = serializers.SerializerMethodField()
     currency = serializers.CharField(max_length=10, default='NGN')
     deliveryTimeline = serializers.CharField(source='timeline', read_only=True)
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = Agreement
@@ -67,6 +68,17 @@ class AgreementSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
 
+    def get_status(self, obj):
+        # Map backend statuses to frontend statuses
+        # Frontend: draft, awaiting_acceptance, active, delivered, completed, disputed, cancelled
+        # Backend: draft, awaiting_acceptance, terms_locked, active, secured, delivered, completed, disputed, cancelled
+        
+        status_map = {
+            'terms_locked': 'active',
+            'secured': 'active',
+        }
+        return status_map.get(obj.status, obj.status)
+
     def get_initialOffer(self, obj):
         # Return the first offer if it exists (usually created by seller on init)
         # We need to filter offers related to this agreement.
@@ -77,6 +89,8 @@ class AgreementSerializer(serializers.ModelSerializer):
             if first_offer:
                 return {
                     "amount": float(first_offer.amount),
+                    "amount_ngn": float(first_offer.amount_ngn) if first_offer.amount_ngn else None,
+                    "amount_usd": float(first_offer.amount_usd) if first_offer.amount_usd else None,
                     "timeline": first_offer.timeline
                 }
         return None

@@ -14,6 +14,7 @@ import uuid
 import logging
 
 from .models import Wallet, Transaction
+from .services import PayoutService
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
 from users.notifications import notify_balance_update
 from .utils import (
@@ -60,8 +61,14 @@ class DepositView(APIView):
             )
 
             # Determine Payment Method and Calculate Fees
-            payment_link = None
             payment_details = None
+            response_data = {
+                "status": "success",
+                "message": "Deposit initiated",
+                "reference": ref,
+                "currency": currency,
+                "amount": float(amount),
+            }
             redirect_url = settings.PAYMENT_REDIRECT_URL
             
             try:
@@ -70,22 +77,62 @@ class DepositView(APIView):
                     gateway_fee = float(amount) * TRANSACTPAY_FEE_PERCENTAGE + 100
                     total_amount = float(amount) + gateway_fee
                     
+                    response_data.update({
+                        "fee": round(gateway_fee, 2),
+                        "total_charged": round(total_amount, 2)
+                    })
+                    
                     tx.payment_method = 'TRANSACTPAY'
                     tx.payment_currency = 'NGN'
                     tx.save()
                     
                     client = TransactPayClient()
-                    result = client.initialize_payment(ref, total_amount, request.user.email, redirect_url)
                     
-                    if result and result.get('status') and result.get('data'):
-                        # Assuming TransactPay returns payment URL in 'data.payment_url' or similar
-                        # Adjust based on actual API response structure
-                        payment_link = result['data'].get('payment_url') or result['data'].get('checkout_url')
-                        
+                    # New Flow: Create Order -> Pay Order (Bank Transfer)
+                    # 1. Create Order
+                    order_response = client.create_order(
+                        reference=ref,
+                        amount=total_amount,
+                        email=request.user.email,
+                        redirect_url=redirect_url,
+                        firstname=request.user.first_name or "User",
+                        lastname=request.user.last_name or "Customer",
+                        mobile=getattr(request.user, 'phone_number', "2348000000000") # Safe attribute access
+                    )
+                    
+                    if order_response and order_response.get('status') == 'success':
+                            # 2. Pay Order with Bank Transfer
+                            pay_response = client.pay_order(ref, payment_option='bank-transfer')
+                            
+                            if pay_response and pay_response.get('status') == 'success':
+                                data = pay_response.get('data', {})
+                                payment_details = data
+                            else:
+                                logger.error(f"TransactPay Pay Order failed for ref {ref}")
+                                tx.status = 'FAILED'
+                                tx.save()
+                                return Response({
+                                "status": "error",
+                                "message": "Failed to initiate bank transfer"
+                            }, status=status.HTTP_502_BAD_GATEWAY)
+                    else:
+                        logger.error(f"TransactPay Create Order failed for ref {ref}")
+                        tx.status = 'FAILED'
+                        tx.save()
+                        return Response({
+                            "status": "error",
+                            "message": "Failed to create payment order"
+                        }, status=status.HTTP_502_BAD_GATEWAY)
+
                 elif currency == 'USD':
                     # NOWPayments Logic
                     gateway_fee = float(converted.get('amount_usd')) * NOWPAYMENTS_FEE_PERCENTAGE
                     total_amount = float(converted.get('amount_usd')) + gateway_fee
+                    
+                    response_data.update({
+                        "fee": round(gateway_fee, 2),
+                        "total_charged": round(total_amount, 2)
+                    })
                     
                     tx.payment_method = 'NOWPAYMENTS'
                     tx.payment_currency = 'USD' # Default crypto
@@ -107,6 +154,14 @@ class DepositView(APIView):
                             "pay_currency": result.get('pay_currency'),
                             "payment_id": result.get('payment_id')
                         }
+                    else:
+                        tx.status = 'FAILED'
+                        tx.save()
+                        logger.error(f"Payment initialization failed for tx {ref}. Currency: {currency}")
+                        return Response({
+                            "status": "error",
+                            "message": "Failed to generate payment link"
+                        }, status=status.HTTP_502_BAD_GATEWAY)
                 
                 else:
                     return Response({
@@ -114,29 +169,10 @@ class DepositView(APIView):
                         "message": f"Unsupported currency: {currency}"
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-                if payment_link or (currency == 'USD' and payment_details):
-                    response_data = {
-                        "status": "success",
-                        "message": "Deposit initiated",
-                        "payment_url": payment_link,
-                        "reference": ref,
-                        "currency": currency,
-                        "amount": float(amount),
-                        "fee": round(gateway_fee, 2),
-                        "total_charged": round(total_amount, 2)
-                    }
-                    if payment_details:
-                        response_data.update(payment_details)
-                        
-                    return Response(response_data, status=status.HTTP_200_OK)
-                else:
-                    tx.status = 'FAILED'
-                    tx.save()
-                    logger.error(f"Payment initialization failed for tx {ref}. Currency: {currency}")
-                    return Response({
-                        "status": "error",
-                        "message": "Failed to generate payment link"
-                    }, status=status.HTTP_502_BAD_GATEWAY)
+                if payment_details:
+                    response_data.update(payment_details)
+
+                return Response(response_data, status=status.HTTP_200_OK)
 
             except Exception as e:
                 logger.error(f"Deposit error: {str(e)}")
@@ -157,6 +193,7 @@ class WithdrawalView(APIView):
         serializer = WithdrawalSerializer(data=request.data)
         if serializer.is_valid():
             amount = serializer.validated_data['amount']
+            currency = serializer.validated_data.get('currency', 'NGN')
             pin = serializer.validated_data['pin']
             account_id = serializer.validated_data['accountId']
 
@@ -178,11 +215,11 @@ class WithdrawalView(APIView):
             
             # Calculate USD/NGN amounts
             from middleman_api.utils import get_converted_amounts
-            converted = get_converted_amounts(amount, wallet.currency)
+            converted = get_converted_amounts(amount, currency)
 
             # Create Transaction
             tx_id = f"tx_{uuid.uuid4().hex[:12]}"
-            Transaction.objects.create(
+            tx = Transaction.objects.create(
                 wallet=wallet,
                 title="Withdrawal",
                 amount=converted.get('amount_ngn') or amount,
@@ -195,6 +232,18 @@ class WithdrawalView(APIView):
                 description=f"Withdrawal to account {account_id}",
                 icon='cash-outline'
             )
+
+            # Process Payout
+            try:
+                PayoutService.process_payout(tx)
+            except Exception as e:
+                logger.error(f"Payout failed for {tx_id}: {e}")
+                tx.status = 'FAILED'
+                tx.save()
+                return Response({
+                    "status": "error",
+                    "message": "Payout processing failed"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             return Response({
                 "status": "success",

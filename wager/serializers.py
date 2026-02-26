@@ -56,6 +56,9 @@ class WagerSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        # Remove PIN from validated_data as it is not part of the Wager model
+        validated_data.pop('pin', None)
+        
         amount = validated_data.get('amount')
         currency = validated_data.get('currency', 'NGN')
         amount_ngn = validated_data.get('amount_ngn')

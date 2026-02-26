@@ -212,6 +212,14 @@ class IdentityVerificationView(GenericAPIView):
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
+            # Additional validation for number digits
+            number = serializer.validated_data.get('number')
+            if not number.isdigit():
+                 return Response({
+                    "status": "error", 
+                    "message": "Invalid number format. Must be digits only."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Update user verification status
             user = request.user
             user.isIdentityVerified = True
@@ -467,7 +475,7 @@ class UserActivitiesView(GenericAPIView):
                     "id": f"act_{w.id}",
                     "type": "wager",
                     "date": w.created_at,
-                    "data": WagerSerializer(w).data
+                    "data": WagerSerializer(w, context={'request': request}).data
                 })
 
         # Fetch Agreements
@@ -495,7 +503,7 @@ class UserActivitiesView(GenericAPIView):
                     "id": f"act_{t.id}",
                     "type": "transaction",
                     "date": t.created_at,
-                    "data": TransactionSerializer(t).data
+                    "data": TransactionSerializer(t, context={'request': request}).data
                 })
 
         # Sort combined list

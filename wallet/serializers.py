@@ -9,6 +9,7 @@ class DepositSerializer(serializers.Serializer):
 
 class WithdrawalSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('100.00'))
+    currency = serializers.CharField(max_length=3, default='NGN')
     accountId = serializers.CharField()
     pin = serializers.CharField(min_length=4, max_length=4)
 

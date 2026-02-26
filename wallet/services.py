@@ -79,3 +79,19 @@ class WalletEngine:
         wallet.balance -= transaction_instance.amount
         wallet.save()
         logger.info(f"Debited {transaction_instance.amount} from Wallet {wallet.pk}")
+
+class PayoutService:
+    @staticmethod
+    def process_payout(transaction):
+        """
+        Simulates a payout process and updates the transaction status to SUCCESSFUL.
+        """
+        logger.info(f"Processing payout for transaction {transaction.reference}")
+        
+        # Simulate payout processing logic here (e.g., call to external payout API)
+        # For now, we assume success immediately.
+        
+        transaction.status = 'SUCCESSFUL'
+        transaction.save()
+        
+        logger.info(f"Payout successful for transaction {transaction.reference}")
