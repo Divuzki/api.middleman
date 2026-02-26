@@ -16,6 +16,7 @@ class WithdrawalSerializer(serializers.Serializer):
 class TransactionSerializer(serializers.ModelSerializer):
     date = serializers.DateTimeField(source='created_at', format="%Y-%m-%dT%H:%M:%S")
     type = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
@@ -25,6 +26,9 @@ class TransactionSerializer(serializers.ModelSerializer):
         if obj.transaction_type in ['DEPOSIT', 'WAGER_WIN']:
             return 'credit'
         return 'debit'
+
+    def get_status(self, obj):
+        return obj.status.title()
 
 class DepositVerificationSerializer(serializers.Serializer):
     reference = serializers.CharField()

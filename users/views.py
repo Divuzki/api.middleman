@@ -238,6 +238,13 @@ class IdentityVerificationView(GenericAPIView):
             user = request.user
             user.isIdentityVerified = True
             user.verifiedAt = timezone.now()
+            
+            # Save identity_id and verification_id if present
+            if 'identity_id' in serializer.validated_data:
+                user.identity_id = serializer.validated_data['identity_id']
+            if 'verification_id' in serializer.validated_data:
+                user.verification_id = serializer.validated_data['verification_id']
+
             user.save()
             
             return Response({

@@ -93,6 +93,8 @@ class BankVerificationSerializer(serializers.Serializer):
 class IdentityVerificationInputSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=['nin', 'bvn'])
     number = serializers.CharField(min_length=11, max_length=11)
+    identityId = serializers.CharField(source='identity_id', required=False, allow_blank=True, allow_null=True)
+    verificationId = serializers.CharField(source='verification_id', required=False, allow_blank=True, allow_null=True)
 
 class IdentityStatusSerializer(serializers.ModelSerializer):
     class Meta:

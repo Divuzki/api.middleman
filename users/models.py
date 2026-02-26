@@ -45,6 +45,8 @@ class User(AbstractUser):
     firebase_uid = models.CharField(max_length=128, unique=True, blank=True, null=True)
     isIdentityVerified = models.BooleanField(default=False)
     verifiedAt = models.DateTimeField(blank=True, null=True)
+    identity_id = models.CharField(max_length=255, null=True, blank=True)
+    verification_id = models.CharField(max_length=255, null=True, blank=True)
 
     currency_preference = models.CharField(max_length=3, choices=[('NGN', 'Nigerian Naira'), ('USD', 'US Dollar')], default='NGN')
     hide_balance = models.BooleanField(default=False)
