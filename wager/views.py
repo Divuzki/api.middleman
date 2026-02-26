@@ -166,7 +166,7 @@ class WagerViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You cannot accept your own request."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Update State
-        wager.status = 'DRAW' # Or COMPLETED, but DRAW is more specific
+        wager.status = 'COMPLETED'
         wager.drawStatus = 'accepted'
         wager.save()
         

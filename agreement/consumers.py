@@ -151,6 +151,9 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         result = await self.process_offer_acceptance(self.user, self.agreement_id, offer_id, pin)
         
         if result['success']:
+            agreement = await self.get_agreement(self.agreement_id)
+            converted = await self.get_converted_amounts_async(result['amount'], agreement.currency)
+
             # Smart Dispatcher: Agreement Update (Critical)
             await self.notify_users(
                 event_type='agreement_updated',
@@ -500,7 +503,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 'offer_id': offer.id,
                 'agreement_status': agreement.status,
                 'offer_status': offer.status,
-                'amount': converted.get('amount_ngn') or float(agreement.amount) if agreement.amount else None,
+                'amount': float(agreement.amount) if agreement.amount else None,
                 'timeline': agreement.timeline,
                 'secured_at': agreement.secured_at,
                 'completed_at': agreement.completed_at,
