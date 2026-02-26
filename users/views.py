@@ -98,17 +98,31 @@ class BankListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        banks = [
-            { "code": "011", "name": "First Bank of Nigeria" },
-            { "code": "058", "name": "Guaranty Trust Bank" },
-            { "code": "033", "name": "United Bank for Africa" }
-        ]
-        # get list of banks from transactpay api
-        client = TransactPayClient()
-        response_data = client.get_banks()
-        
-        if response_data and response_data.get("status"):
-            banks = response_data.get("data", [])
+        cache_key = 'bank_list'
+        banks = cache.get(cache_key)
+
+        if banks is None:
+            # Fallback hardcoded list
+            banks = [
+                { "code": "011", "name": "First Bank of Nigeria" },
+                { "code": "058", "name": "Guaranty Trust Bank" },
+                { "code": "033", "name": "United Bank for Africa" }
+            ]
+
+            # get list of banks from transactpay api
+            try:
+                client = TransactPayClient()
+                response_data = client.get_banks()
+                
+                if response_data and response_data.get("status"):
+                    fetched_banks = response_data.get("data", [])
+                    if fetched_banks:
+                        banks = fetched_banks
+                        # Cache for 24 hours
+                        cache.set(cache_key, banks, 60 * 60 * 24)
+            except Exception:
+                # If fetching fails, we stick with the hardcoded list
+                pass
             
         return Response({
             "status": "success",
@@ -462,57 +476,77 @@ class UserActivitiesView(GenericAPIView):
         limit = int(request.query_params.get('limit', 10))
         activity_type = request.query_params.get('type', 'all')
 
-        activities = []
+        # Calculate fetch limit to ensure we have enough items for the requested page
+        fetch_limit = page * limit
+        activity_objects = []
 
         # Fetch Wagers
         if activity_type in ['all', 'wager']:
             wagers = Wager.objects.filter(
                 Q(creator=user) | Q(opponent=user)
-            ).order_by('-created_at')
+            ).order_by('-created_at')[:fetch_limit]
             
             for w in wagers:
-                activities.append({
-                    "id": f"act_{w.id}",
+                activity_objects.append({
                     "type": "wager",
                     "date": w.created_at,
-                    "data": WagerSerializer(w, context={'request': request}).data
+                    "obj": w
                 })
 
         # Fetch Agreements
         if activity_type in ['all', 'agreement']:
             agreements = Agreement.objects.filter(
                 Q(initiator=user) | Q(counterparty=user)
-            ).order_by('-created_at')
+            ).order_by('-created_at')[:fetch_limit]
             
             for a in agreements:
-                activities.append({
-                    "id": f"act_{a.id}",
+                activity_objects.append({
                     "type": "agreement",
                     "date": a.created_at,
-                    "data": AgreementSerializer(a, context={'request': request}).data
+                    "obj": a
                 })
 
         # Fetch Transactions
         if activity_type in ['all', 'transaction']:
             transactions = Transaction.objects.filter(
                 wallet__user_id=user.id
-            ).order_by('-created_at')
+            ).order_by('-created_at')[:fetch_limit]
             
             for t in transactions:
-                activities.append({
-                    "id": f"act_{t.id}",
+                activity_objects.append({
                     "type": "transaction",
                     "date": t.created_at,
-                    "data": TransactionSerializer(t, context={'request': request}).data
+                    "obj": t
                 })
 
         # Sort combined list
-        activities.sort(key=lambda x: x['date'], reverse=True)
+        activity_objects.sort(key=lambda x: x['date'], reverse=True)
 
-        # Paginate
+        # Paginate objects first
         start = (page - 1) * limit
         end = start + limit
-        paginated_activities = activities[start:end]
+        paginated_objects = activity_objects[start:end]
 
-        return Response(paginated_activities, status=status.HTTP_200_OK)
+        # Serialize only the requested page items
+        activities = []
+        for item in paginated_objects:
+            obj = item['obj']
+            if item['type'] == 'wager':
+                data = WagerSerializer(obj, context={'request': request}).data
+                act_id = f"act_{obj.id}"
+            elif item['type'] == 'agreement':
+                data = AgreementSerializer(obj, context={'request': request}).data
+                act_id = f"act_{obj.id}"
+            elif item['type'] == 'transaction':
+                data = TransactionSerializer(obj, context={'request': request}).data
+                act_id = f"act_{obj.id}"
+            
+            activities.append({
+                "id": act_id,
+                "type": item['type'],
+                "date": item['date'],
+                "data": data
+            })
+
+        return Response(activities, status=status.HTTP_200_OK)
 

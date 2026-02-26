@@ -91,7 +91,7 @@ class Wager(models.Model):
         db_constraint=False
     )
     
-    shareLink = models.CharField(max_length=255, blank=True)
+    share_link = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -99,9 +99,9 @@ class Wager(models.Model):
             # Generate a unique ID, e.g., w_<uuid_short>
             self.id = f"w_{uuid.uuid4().hex[:8]}"
         
-        if not self.shareLink:
+        if not self.share_link:
             # Placeholder for share link generation logic
-            self.shareLink = f"middleman.app/wager/{self.id}"
+            self.share_link = f"middleman.app/wager/{self.id}"
             
         super().save(*args, **kwargs)
 

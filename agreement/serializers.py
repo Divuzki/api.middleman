@@ -69,15 +69,7 @@ class AgreementSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
 
     def get_status(self, obj):
-        # Map backend statuses to frontend statuses
-        # Frontend: draft, awaiting_acceptance, active, delivered, completed, disputed, cancelled
-        # Backend: draft, awaiting_acceptance, terms_locked, active, secured, delivered, completed, disputed, cancelled
-        
-        status_map = {
-            'terms_locked': 'active',
-            'secured': 'active',
-        }
-        return status_map.get(obj.status, obj.status)
+        return obj.status
 
     def get_initialOffer(self, obj):
         # Return the first offer if it exists (usually created by seller on init)

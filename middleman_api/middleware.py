@@ -22,4 +22,9 @@ class RequestLoggingMiddleware:
         logger.info(f"Incoming Request - Method: {method}, Path: {path}, Origin: {origin}, Host: {host}, User-Agent: {user_agent}")
 
         response = self.get_response(request)
+        
+        # Log response status
+        print(f"Response Status: {response.status_code}")
+        logger.info(f"Response Status: {response.status_code}")
+        
         return response

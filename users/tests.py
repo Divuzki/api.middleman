@@ -4,6 +4,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from unittest.mock import patch, MagicMock
 from rest_framework.exceptions import AuthenticationFailed
+from django.core.cache import cache
 
 User = get_user_model()
 
@@ -140,3 +141,96 @@ class PerformanceTests(TestCase):
         
         # Ensure only 1 user created
         self.assertEqual(User.objects.count(), 1)
+
+class BankListViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = '/banks/'
+        self.cache_key = 'bank_list'
+        cache.delete(self.cache_key) # Ensure clean state
+
+    @patch('users.views.TransactPayClient')
+    def test_cache_miss_api_success(self, MockClient):
+        # Setup mock
+        mock_instance = MockClient.return_value
+        expected_banks = [{'code': '999', 'name': 'Test Bank'}]
+        mock_instance.get_banks.return_value = {
+            'status': 'success',
+            'data': expected_banks
+        }
+
+        # Make request
+        response = self.client.get(self.url)
+
+        # Assertions
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['data'], expected_banks)
+        
+        # Verify API called
+        mock_instance.get_banks.assert_called_once()
+        
+        # Verify cached
+        cached_data = cache.get(self.cache_key)
+        self.assertEqual(cached_data, expected_banks)
+
+    @patch('users.views.TransactPayClient')
+    def test_cache_hit(self, MockClient):
+        # Setup cache
+        cached_banks = [{'code': '888', 'name': 'Cached Bank'}]
+        cache.set(self.cache_key, cached_banks)
+        
+        # Make request
+        response = self.client.get(self.url)
+        
+        # Assertions
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['data'], cached_banks)
+        
+        # Verify API NOT called
+        MockClient.assert_not_called()
+
+    @patch('users.views.TransactPayClient')
+    def test_cache_miss_api_fail(self, MockClient):
+        # Setup mock to fail
+        mock_instance = MockClient.return_value
+        mock_instance.get_banks.return_value = None # or {'status': 'error'}
+
+        # Make request
+        response = self.client.get(self.url)
+
+        # Assertions
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify fallback to hardcoded list
+        hardcoded_banks = [
+            { "code": "011", "name": "First Bank of Nigeria" },
+            { "code": "058", "name": "Guaranty Trust Bank" },
+            { "code": "033", "name": "United Bank for Africa" }
+        ]
+        self.assertEqual(response.data['data'], hardcoded_banks)
+        
+        # Verify API called
+        mock_instance.get_banks.assert_called_once()
+        
+        # Verify NOT cached
+        self.assertIsNone(cache.get(self.cache_key))
+
+    @patch('users.views.TransactPayClient')
+    def test_cache_miss_api_exception(self, MockClient):
+        # Setup mock to raise exception
+        mock_instance = MockClient.return_value
+        mock_instance.get_banks.side_effect = Exception("API Error")
+
+        # Make request
+        response = self.client.get(self.url)
+
+        # Assertions
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify fallback
+        hardcoded_banks = [
+            { "code": "011", "name": "First Bank of Nigeria" },
+            { "code": "058", "name": "Guaranty Trust Bank" },
+            { "code": "033", "name": "United Bank for Africa" }
+        ]
+        self.assertEqual(response.data['data'], hardcoded_banks)
