@@ -91,6 +91,11 @@ if not DEBUG:
                 'level': 'INFO',
                 'propagate': True,
             },
+            'middleman_api': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
         },
     }
 
@@ -132,6 +137,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'middleman_api.middleware.RequestLoggingMiddleware',
     'django.middleware.security.SecurityMiddleware',
     "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
