@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
 from unittest.mock import patch
-from .models import Wallet, Transaction
+from wallet.models import Wallet, Transaction
 from django.conf import settings
 import json
 import hmac
@@ -21,10 +21,10 @@ class IntegrationTests(TestCase):
         self.client.force_authenticate(user=self.user)
         self.wallet = Wallet.objects.get(user_id=self.user.id)
 
-    @patch('wallet.views.TransactPayClient.initialize_payment')
-    def test_deposit_initialization_failure_transactpay(self, mock_init):
+    @patch('wallet.views.TransactPayClient.get_fee')
+    def test_deposit_initialization_failure_transactpay(self, mock_get_fee):
         # Simulate failure (return None)
-        mock_init.return_value = None
+        mock_get_fee.return_value = None
 
         url = reverse('deposit')
         data = {'amount': '5000.00', 'currency': 'NGN'}
@@ -34,7 +34,8 @@ class IntegrationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         
         # Transaction should be marked as FAILED
-        tx = Transaction.objects.filter(wallet=self.wallet, payment_method='TRANSACTPAY').latest('created_at')
+        # Note: In the new flow, if get_fee fails, the transaction is marked as FAILED but payment_method might not be set yet.
+        tx = Transaction.objects.filter(wallet=self.wallet).latest('created_at')
         self.assertEqual(tx.status, 'FAILED')
 
     @patch('wallet.views.NOWPaymentsClient.create_payment')

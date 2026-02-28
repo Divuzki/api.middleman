@@ -355,7 +355,8 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
-    ]
+    ],
+    'EXCEPTION_HANDLER': 'middleman_api.exceptions.custom_exception_handler',
 }
 
 # Firebase Configuration

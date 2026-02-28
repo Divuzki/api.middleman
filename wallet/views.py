@@ -74,7 +74,34 @@ class DepositView(APIView):
             try:
                 if currency == 'NGN':
                     # TransactPay Logic
-                    gateway_fee = float(amount) * TRANSACTPAY_FEE_PERCENTAGE + 100
+                    client = TransactPayClient()
+                    fee_response = client.get_fee(amount, currency)
+                    
+                    if fee_response and fee_response.get('status') == 'success':
+                        data = fee_response.get('data', {})
+                        # Assuming fee is returned in data.fee. Adjust based on actual API response if needed.
+                        # User suggestion: response.get('data', {}).get('fee')
+                        fetched_fee = data.get('fee')
+                        
+                        if fetched_fee is not None:
+                            gateway_fee = float(fetched_fee)
+                        else:
+                            logger.error(f"TransactPay fee not found in response: {fee_response}")
+                            tx.status = 'FAILED'
+                            tx.save()
+                            return Response({
+                                "status": "error",
+                                "message": "Unable to fetch transaction fee"
+                            }, status=status.HTTP_502_BAD_GATEWAY)
+                    else:
+                        logger.error(f"TransactPay get_fee failed for amount {amount}: {fee_response}")
+                        tx.status = 'FAILED'
+                        tx.save()
+                        return Response({
+                            "status": "error",
+                            "message": "Unable to fetch transaction fee"
+                        }, status=status.HTTP_502_BAD_GATEWAY)
+
                     total_amount = float(amount) + gateway_fee
                     
                     response_data.update({
@@ -85,8 +112,6 @@ class DepositView(APIView):
                     tx.payment_method = 'TRANSACTPAY'
                     tx.payment_currency = 'NGN'
                     tx.save()
-                    
-                    client = TransactPayClient()
                     
                     # New Flow: Create Order -> Pay Order (Bank Transfer)
                     # 1. Create Order
@@ -126,6 +151,16 @@ class DepositView(APIView):
 
                 elif currency == 'USD':
                     # NOWPayments Logic
+                    # Dynamic fee fetching is available via `get_estimated_price` but fixed 0.5% is standard.
+                    
+                    # Optional: Call client.get_estimated_price and log the result for debugging.
+                    try:
+                        debug_client = NOWPaymentsClient()
+                        estimate = debug_client.get_estimated_price(converted.get('amount_usd'))
+                        logger.info(f"NOWPayments Estimate for {converted.get('amount_usd')} USD: {estimate}")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch NOWPayments estimate: {e}")
+
                     gateway_fee = float(converted.get('amount_usd')) * NOWPAYMENTS_FEE_PERCENTAGE
                     total_amount = float(converted.get('amount_usd')) + gateway_fee
                     

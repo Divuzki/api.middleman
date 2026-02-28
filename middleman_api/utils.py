@@ -1,3 +1,5 @@
+from rest_framework.response import Response
+from rest_framework import status
 from decimal import Decimal
 from rates.models import Rate
 import logging
@@ -57,3 +59,16 @@ def get_converted_amounts(amount, currency):
             result['amount_usd'] = float(round(amount_dec / usd_rate, 2))
     
     return result
+
+class StandardResponse(Response):
+    def __init__(self, data=None, status=None, code="success", message="Success", **kwargs):
+        status_code = status if status is not None else 200
+        standardized_data = {
+            "status": "success" if (200 <= status_code < 300) else "error",
+            "code": code,
+            "message": message,
+        }
+        if data is not None:
+            standardized_data["data"] = data
+        
+        super().__init__(standardized_data, status=status_code, **kwargs)

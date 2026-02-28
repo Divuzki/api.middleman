@@ -173,6 +173,34 @@ class TransactPayClient:
                 logger.error(f"TransactPay response: {e.response.text}")
             return None
 
+    def get_fee(self, amount, currency='NGN', payment_option='bank-transfer'):
+        """
+        Get transaction fee.
+        """
+        url = f"{self.base_url}/order/fee"
+        
+        payload = {
+            "amount": float(amount),
+            "currency": currency,
+            "paymentoption": payment_option
+        }
+        
+        encrypted_data = self._encrypt_payload(payload)
+        if not encrypted_data:
+            return None
+            
+        request_payload = {"data": encrypted_data}
+        
+        try:
+            response = requests.post(url, json=request_payload, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"TransactPay get fee error: {str(e)}")
+            if e.response:
+                logger.error(f"TransactPay response: {e.response.text}")
+            return None
+
     def initialize_payment(self, reference, amount, email, redirect_url):
         """
         Deprecated: Use create_order + pay_order flow.
@@ -298,6 +326,27 @@ class NOWPaymentsClient:
             return response.json()
         except requests.RequestException as e:
             logger.error(f"NOWPayments payment error: {str(e)}")
+            if e.response is not None:
+                logger.error(f"NOWPayments response: {e.response.text}")
+            return None
+
+    def get_estimated_price(self, amount, currency_from='usd', currency_to='usdtbsc'):
+        """
+        Get estimated price.
+        """
+        url = f"{self.base_url}/estimate"
+        params = {
+            "amount": amount,
+            "currency_from": currency_from,
+            "currency_to": currency_to
+        }
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"NOWPayments estimate error: {str(e)}")
             if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
             return None
