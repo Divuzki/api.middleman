@@ -1,10 +1,11 @@
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.db.models import Q
+from datetime import datetime
 from wallet.models import Wallet
 from wager.models import Wager
 from agreement.models import Agreement
-from firebase_admin.messaging import Message, Notification, AndroidConfig, APNSConfig, APNSPayload, Aps
+from firebase_admin.messaging import Message, Notification, AndroidConfig, APNSConfig, APNSPayload, Aps, AndroidNotification
 from fcm_django.models import FCMDevice
 
 def send_device_logout_notification(fcm_device):
@@ -125,3 +126,99 @@ def notify_badge_counts(user):
             'data': data
         }
     )
+
+def send_chat_notification(recipient, sender_name, message_text, conversation_id, conversation_type, sender_id):
+    """
+    Sends a chat notification to the recipient's devices.
+    Constructs specific payloads for iOS (APNS) and Android (FCM).
+    """
+    if not recipient:
+        return
+
+    devices = FCMDevice.objects.filter(user=recipient, active=True)
+    if not devices.exists():
+        return
+
+    # Prepare data payload
+    data_payload = {
+        "conversationId": str(conversation_id),
+        "type": str(conversation_type),
+        "senderName": str(sender_name),
+        "senderId": str(sender_id),
+        "timestamp": datetime.now().isoformat()
+    }
+
+    try:
+        devices.send_message(
+            Message(
+                notification=Notification(
+                    title=sender_name,
+                    body=message_text
+                ),
+                data=data_payload,
+                android=AndroidConfig(
+                    notification=AndroidNotification(
+                        click_action="CHAT_MSG",
+                        tag=str(conversation_id),
+                        channel_id="default"
+                    )
+                ),
+                apns=APNSConfig(
+                    payload=APNSPayload(
+                        aps=Aps(
+                            category="CHAT_MSG",
+                            thread_id=str(conversation_id)
+                        )
+                    )
+                )
+            )
+        )
+    except Exception as e:
+        print(f"Error sending chat notification: {e}")
+
+def send_status_notification(recipient, title, body, conversation_id, conversation_type, status):
+    """
+    Sends a status update notification to the recipient's devices.
+    Constructs specific payloads for iOS (APNS) and Android (FCM).
+    """
+    if not recipient:
+        return
+
+    devices = FCMDevice.objects.filter(user=recipient, active=True)
+    if not devices.exists():
+        return
+
+    # Prepare data payload
+    data_payload = {
+        "conversationId": str(conversation_id),
+        "type": str(conversation_type),
+        "status": str(status),
+        "url": f"/app/{conversation_type}/{conversation_id}"
+    }
+
+    try:
+        devices.send_message(
+            Message(
+                notification=Notification(
+                    title=title,
+                    body=body
+                ),
+                data=data_payload,
+                android=AndroidConfig(
+                    notification=AndroidNotification(
+                        click_action="STATUS_UPDATE",
+                        tag=str(conversation_id)
+                    )
+                ),
+                apns=APNSConfig(
+                    payload=APNSPayload(
+                        aps=Aps(
+                            category="STATUS_UPDATE",
+                            thread_id=str(conversation_id)
+                        )
+                    )
+                )
+            )
+        )
+    except Exception as e:
+        print(f"Error sending status notification: {e}")

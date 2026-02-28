@@ -1,6 +1,8 @@
 import logging
 from django.db import transaction
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
+from users.notifications import notify_balance_update
 from .models import Wallet, Transaction
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,14 @@ class WalletEngine:
                     
                     # Log the successful operation
                     logger.info(f"Balance updated successfully for Wallet {wallet.pk}. New Balance: {wallet.balance}")
+
+                    # Notify user of balance update
+                    User = get_user_model()
+                    try:
+                        user = User.objects.get(pk=wallet.user_id)
+                        notify_balance_update(user)
+                    except User.DoesNotExist:
+                        logger.warning(f"User {wallet.user_id} not found for wallet {wallet.pk}, skipping notification")
 
             except ValidationError as e:
                 # Re-raise validation errors to abort the save
