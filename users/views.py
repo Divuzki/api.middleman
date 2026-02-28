@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
+from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound, APIException
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password
@@ -30,6 +31,7 @@ from agreement.models import Agreement
 from agreement.serializers import AgreementSerializer
 from wallet.models import Transaction
 from wallet.serializers import TransactionSerializer
+from middleman_api.utils import StandardResponse
 
 class AuthView(APIView):
     permission_classes = [IsAuthenticated]
@@ -40,8 +42,7 @@ class AuthView(APIView):
         The actual authentication logic is handled by FirebaseAuthentication.
         """
         serializer = AuthUserSerializer(request.user)
-        return Response({
-            "status": "success",
+        return StandardResponse(data={
             "valid": True,
             "user": serializer.data
         })
@@ -55,23 +56,21 @@ class UserProfileUpdateView(GenericAPIView):
         if serializer.is_valid():
             user = serializer.save()
             # Return response in the specified format
-            return Response({
-                "status": "success",
-                "message": "Profile updated successfully",
-                "user": {
-                    "uid": user.firebase_uid, # Assuming firebase_uid is the uid
-                    "email": user.email,
-                    "firstName": user.first_name,
-                    "lastName": user.last_name,
-                    "displayName": f"{user.first_name} {user.last_name}".strip(),
-                    "currency_preference": user.currency_preference,
-                    "hide_balance": user.hide_balance
+            return StandardResponse(
+                message="Profile updated successfully",
+                data={
+                    "user": {
+                        "uid": user.firebase_uid, # Assuming firebase_uid is the uid
+                        "email": user.email,
+                        "firstName": user.first_name,
+                        "lastName": user.last_name,
+                        "displayName": f"{user.first_name} {user.last_name}".strip(),
+                        "currency_preference": user.currency_preference,
+                        "hide_balance": user.hide_balance
+                    }
                 }
-            }, status=status.HTTP_200_OK)
-        return Response({
-            "status": "error",
-            "message": "Invalid data format"
-        }, status=status.HTTP_400_BAD_REQUEST)
+            )
+        raise ValidationError(serializer.errors)
 
 class UserProfilePictureUpdateView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -81,18 +80,16 @@ class UserProfilePictureUpdateView(GenericAPIView):
         serializer = self.get_serializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             user = serializer.save()
-            return Response({
-                "status": "success",
-                "message": "Profile picture updated successfully",
-                "user": {
-                    "uid": user.firebase_uid,
-                    "photoURL": user.image_url
+            return StandardResponse(
+                message="Profile picture updated successfully",
+                data={
+                    "user": {
+                        "uid": user.firebase_uid,
+                        "photoURL": user.image_url
+                    }
                 }
-            }, status=status.HTTP_200_OK)
-        return Response({
-            "status": "error",
-            "message": "Invalid URL format"
-        }, status=status.HTTP_400_BAD_REQUEST)
+            )
+        raise ValidationError("Invalid URL format")
 
 class BankListView(APIView):
     permission_classes = [AllowAny]
@@ -124,10 +121,7 @@ class BankListView(APIView):
                 # If fetching fails, we stick with the hardcoded list
                 pass
             
-        return Response({
-            "status": "success",
-            "data": banks
-        })
+        return StandardResponse(data=banks)
 
 class PayoutAccountListCreateView(ListCreateAPIView):
     permission_classes = [IsAuthenticated]
@@ -139,21 +133,18 @@ class PayoutAccountListCreateView(ListCreateAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            "status": "success",
-            "data": serializer.data
-        })
+        return StandardResponse(data=serializer.data)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             serializer.save(user=request.user)
-            return Response({
-                "status": "success",
-                "message": "Account added successfully",
-                "data": serializer.data
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return StandardResponse(
+                status=status.HTTP_201_CREATED,
+                message="Account added successfully",
+                data=serializer.data
+            )
+        raise ValidationError(serializer.errors)
 
 class PayoutAccountDeleteView(DestroyAPIView):
     permission_classes = [IsAuthenticated]
@@ -180,10 +171,7 @@ class PayoutAccountDeleteView(DestroyAPIView):
     def delete(self, request, *args, **kwargs):
         instance = self.get_object()
         self.perform_destroy(instance)
-        return Response({
-            "status": "success",
-            "message": "Account removed successfully"
-        }, status=status.HTTP_200_OK)
+        return StandardResponse(message="Account removed successfully")
 
 class VerifyBankAccountView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -202,22 +190,14 @@ class VerifyBankAccountView(GenericAPIView):
             # Check if response is successful
             if response_data and response_data.get("status"):
                 data = response_data.get("data", {})
-                return Response({
-                    "status": "success",
+                return StandardResponse(data={
                     "valid": True,
                     "accountName": data.get("account_name", "Unknown")
-                }, status=status.HTTP_200_OK)
+                })
             else:
-                return Response({
-                    "status": "error",
-                    "valid": False,
-                    "message": "Could not resolve account name"
-                }, status=status.HTTP_400_BAD_REQUEST)
-        return Response({
-            "status": "error",
-            "valid": False,
-            "message": "Could not resolve account name"
-        }, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError("Could not resolve account name")
+        
+        raise ValidationError("Could not resolve account name")
 
 class IdentityVerificationView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -229,10 +209,7 @@ class IdentityVerificationView(GenericAPIView):
             # Additional validation for number digits
             number = serializer.validated_data.get('number')
             if not number.isdigit():
-                 return Response({
-                    "status": "error", 
-                    "message": "Invalid number format. Must be digits only."
-                }, status=status.HTTP_400_BAD_REQUEST)
+                 raise ValidationError("Invalid number format. Must be digits only.")
 
             # Update user verification status
             user = request.user
@@ -247,16 +224,12 @@ class IdentityVerificationView(GenericAPIView):
 
             user.save()
             
-            return Response({
-                "status": "success",
-                "message": "Identity verified successfully",
-                "verified": True
-            }, status=status.HTTP_200_OK)
+            return StandardResponse(
+                message="Identity verified successfully",
+                data={"verified": True}
+            )
         
-        return Response({
-            "status": "error",
-            "message": "Invalid NIN/BVN number"
-        }, status=status.HTTP_400_BAD_REQUEST)
+        raise ValidationError("Invalid NIN/BVN number")
 
 class IdentityStatusView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -264,11 +237,10 @@ class IdentityStatusView(GenericAPIView):
 
     def get(self, request):
         user = request.user
-        return Response({
-            "status": "success",
+        return StandardResponse(data={
             "isIdentityVerified": user.isIdentityVerified,
             "verifiedAt": user.verifiedAt
-        }, status=status.HTTP_200_OK)
+        })
 
 class SetAccountPinView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -284,18 +256,12 @@ class SetAccountPinView(GenericAPIView):
             # If user already has a PIN, require OTP
             if user.has_set_account_pin:
                 if not otp:
-                     return Response({
-                        "status": "error",
-                        "message": "OTP required to change existing PIN"
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                     raise ValidationError("OTP required to change existing PIN")
                 
                 # Verify OTP
                 cached_otp = cache.get(f"pin_change_otp_{user.id}")
                 if not cached_otp or str(cached_otp) != str(otp):
-                    return Response({
-                        "status": "error",
-                        "message": "Invalid or expired OTP"
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                    raise ValidationError("Invalid or expired OTP")
                 
                 # Clear OTP after successful use
                 cache.delete(f"pin_change_otp_{user.id}")
@@ -305,15 +271,9 @@ class SetAccountPinView(GenericAPIView):
             user.has_set_account_pin = True
             user.save()
 
-            return Response({
-                "status": "success",
-                "message": "Account PIN updated successfully"
-            }, status=status.HTTP_200_OK)
+            return StandardResponse(message="Account PIN updated successfully")
         
-        return Response({
-            "status": "error",
-            "message": "PIN must be exactly 4 digits"
-        }, status=status.HTTP_400_BAD_REQUEST)
+        raise ValidationError("PIN must be exactly 4 digits")
 
 class RequestPinChangeOTPView(APIView):
     permission_classes = [IsAuthenticated]
@@ -331,15 +291,9 @@ class RequestPinChangeOTPView(APIView):
         success = send_otp_email(user, otp)
         
         if success:
-            return Response({
-                "status": "success",
-                "message": "OTP sent to email"
-            }, status=status.HTTP_200_OK)
+            return StandardResponse(message="OTP sent to email")
         else:
-             return Response({
-                "status": "error",
-                "message": "Failed to send email"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             raise APIException("Failed to send email")
 
 class VerifyPinChangeOTPView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -354,31 +308,15 @@ class VerifyPinChangeOTPView(GenericAPIView):
             cached_otp = cache.get(f"pin_change_otp_{user.id}")
             
             if cached_otp and str(cached_otp) == str(otp):
-                # Generate a temporary token? Or just return success.
-                # The endpoints/otp.md says return "token".
-                # We can generate a dummy token or a signed one.
-                # For simplicity, we'll return a UUID that acts as a proof,
-                # but SetAccountPinView currently validates the OTP code itself.
-                # To support both flows, we'll return a token but the main logic relies on the OTP code being valid in cache.
-                # Or, we could store "verified_token" in cache and check that in SetAccountPinView.
-                # But SetAccountPinView (as updated above) expects the OTP code.
-                # So we return success.
-                
                 token = f"verified_{uuid.uuid4().hex}"
-                # Optionally cache this token if we wanted to enforce token-based flow
-                
-                return Response({
-                    "status": "success",
-                    "message": "OTP verified",
-                    "token": token
-                }, status=status.HTTP_200_OK)
+                return StandardResponse(
+                    message="OTP verified",
+                    data={"token": token}
+                )
             else:
-                return Response({
-                    "status": "error",
-                    "message": "Invalid or expired OTP"
-                }, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError("Invalid or expired OTP")
                 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        raise ValidationError(serializer.errors)
 
 class DeviceListCreateView(ListCreateAPIView):
     permission_classes = [IsAuthenticated]
@@ -392,7 +330,6 @@ class DeviceListCreateView(ListCreateAPIView):
         serializer = self.get_serializer(queryset, many=True)
         
         # Calculate current_device
-        # Assuming the request might contain the device_uuid in a header "X-Device-UUID"
         current_device_uuid = request.headers.get('X-Device-UUID')
         
         data = []
@@ -401,23 +338,21 @@ class DeviceListCreateView(ListCreateAPIView):
             device_data['current_device'] = (device_data['device_uuid'] == current_device_uuid)
             data.append(device_data)
 
-        return Response({
-            "data": data
-        })
+        return StandardResponse(data=data)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             device_profile = serializer.save()
-            return Response({
-                "status": "success",
-                "data": {
+            return StandardResponse(
+                status=status.HTTP_200_OK, # Returning 200 as it might be an update
+                data={
                     "device_uuid": device_profile.device_uuid,
                     "device_name": device_profile.device_name,
                     "is_active": device_profile.is_active
                 }
-            }, status=status.HTTP_200_OK) # Returning 200 as it might be an update
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            )
+        raise ValidationError(serializer.errors)
 
 class DeviceDetailView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -444,12 +379,9 @@ class DeviceDetailView(GenericAPIView):
                 device.fcm_device.active = True
                 device.fcm_device.save()
 
-        return Response({
-            "status": "success",
-            "data": {
-                "device_uuid": device.device_uuid,
-                "is_active": device.is_active
-            }
+        return StandardResponse(data={
+            "device_uuid": device.device_uuid,
+            "is_active": device.is_active
         })
 
     def delete(self, request, device_uuid):
@@ -465,14 +397,7 @@ class DeviceDetailView(GenericAPIView):
             device.fcm_device = None
             device.save()
             
-        # We keep the device profile as per requirements, or maybe just mark it inactive?
-        # The requirements say "Removes the FCM token association... but keeps the device record"
-        # So we just deleted the FCMDevice linkage above.
-        
-        return Response({
-            "status": "success",
-            "message": "Device logged out successfully"
-        }, status=status.HTTP_200_OK)
+        return StandardResponse(message="Device logged out successfully")
 
 class UserActivitiesView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -555,5 +480,4 @@ class UserActivitiesView(GenericAPIView):
                 "data": data
             })
 
-        return Response(activities, status=status.HTTP_200_OK)
-
+        return StandardResponse(data=activities)

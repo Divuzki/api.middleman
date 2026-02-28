@@ -24,6 +24,8 @@ from .utils import (
     TRANSACTPAY_FEE_PERCENTAGE,
     NOWPAYMENTS_FEE_PERCENTAGE
 )
+from middleman_api.utils import StandardResponse, get_converted_amounts
+from middleman_api.exceptions import GatewayError
 from django.conf import settings
 
 User = get_user_model()
@@ -42,7 +44,6 @@ class DepositView(APIView):
             wallet, _ = Wallet.objects.get_or_create(user_id=request.user.id)
             
             # Calculate USD/NGN amounts (for display/record)
-            from middleman_api.utils import get_converted_amounts
             converted = get_converted_amounts(amount, wallet.currency)
 
             # Create pending transaction
@@ -63,8 +64,6 @@ class DepositView(APIView):
             # Determine Payment Method and Calculate Fees
             payment_details = None
             response_data = {
-                "status": "success",
-                "message": "Deposit initiated",
                 "reference": ref,
                 "currency": currency,
                 "amount": float(amount),
@@ -87,20 +86,10 @@ class DepositView(APIView):
                             gateway_fee = float(fetched_fee)
                         else:
                             logger.error(f"TransactPay fee not found in response: {fee_response}")
-                            tx.status = 'FAILED'
-                            tx.save()
-                            return Response({
-                                "status": "error",
-                                "message": "Unable to fetch transaction fee"
-                            }, status=status.HTTP_502_BAD_GATEWAY)
+                            raise GatewayError("Unable to fetch transaction fee")
                     else:
                         logger.error(f"TransactPay get_fee failed for amount {amount}: {fee_response}")
-                        tx.status = 'FAILED'
-                        tx.save()
-                        return Response({
-                            "status": "error",
-                            "message": "Unable to fetch transaction fee"
-                        }, status=status.HTTP_502_BAD_GATEWAY)
+                        raise GatewayError("Unable to fetch transaction fee")
 
                     total_amount = float(amount) + gateway_fee
                     
@@ -134,20 +123,10 @@ class DepositView(APIView):
                                 payment_details = data
                             else:
                                 logger.error(f"TransactPay Pay Order failed for ref {ref}")
-                                tx.status = 'FAILED'
-                                tx.save()
-                                return Response({
-                                "status": "error",
-                                "message": "Failed to initiate bank transfer"
-                            }, status=status.HTTP_502_BAD_GATEWAY)
+                                raise GatewayError("Failed to initiate bank transfer")
                     else:
                         logger.error(f"TransactPay Create Order failed for ref {ref}")
-                        tx.status = 'FAILED'
-                        tx.save()
-                        return Response({
-                            "status": "error",
-                            "message": "Failed to create payment order"
-                        }, status=status.HTTP_502_BAD_GATEWAY)
+                        raise GatewayError("Failed to create payment order")
 
                 elif currency == 'USD':
                     # NOWPayments Logic
@@ -190,36 +169,34 @@ class DepositView(APIView):
                             "payment_id": result.get('payment_id')
                         }
                     else:
-                        tx.status = 'FAILED'
-                        tx.save()
                         logger.error(f"Payment initialization failed for tx {ref}. Currency: {currency}")
-                        return Response({
-                            "status": "error",
-                            "message": "Failed to generate payment link"
-                        }, status=status.HTTP_502_BAD_GATEWAY)
+                        raise GatewayError("Failed to generate payment link")
                 
                 else:
-                    return Response({
-                        "status": "error",
-                        "message": f"Unsupported currency: {currency}"
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                    return StandardResponse(
+                        status=status.HTTP_400_BAD_REQUEST,
+                        code="error",
+                        message=f"Unsupported currency: {currency}"
+                    )
 
                 if payment_details:
                     response_data.update(payment_details)
 
-                return Response(response_data, status=status.HTTP_200_OK)
+                return StandardResponse(data=response_data, message="Deposit initiated")
 
             except Exception as e:
+                # Mark transaction as failed if any error occurs
+                tx.status = 'FAILED'
+                tx.save()
                 logger.error(f"Deposit error: {str(e)}")
-                return Response({
-                    "status": "error",
-                    "message": "Internal server error during deposit initialization"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                # Re-raise exception to be handled by custom_exception_handler
+                raise e
         
-        return Response({
-            "status": "error",
-            "message": "Invalid amount"
-        }, status=status.HTTP_400_BAD_REQUEST)
+        return StandardResponse(
+            status=status.HTTP_400_BAD_REQUEST,
+            code="error",
+            message="Invalid amount"
+        )
 
 class WithdrawalView(APIView):
     permission_classes = [IsAuthenticated]
@@ -235,21 +212,22 @@ class WithdrawalView(APIView):
             # Verify PIN (using the User model in default DB)
             user = request.user
             if not user.transaction_pin or not user.verify_pin(pin):
-                return Response({
-                    "status": "error",
-                    "message": "Invalid PIN"
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return StandardResponse(
+                    status=status.HTTP_400_BAD_REQUEST,
+                    code="error",
+                    message="Invalid PIN"
+                )
 
             # Check Balance
             wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
             if wallet.balance < amount:
-                return Response({
-                    "status": "error",
-                    "message": "Insufficient funds"
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return StandardResponse(
+                    status=status.HTTP_400_BAD_REQUEST,
+                    code="error",
+                    message="Insufficient funds"
+                )
             
             # Calculate USD/NGN amounts
-            from middleman_api.utils import get_converted_amounts
             converted = get_converted_amounts(amount, currency)
 
             # Create Transaction
@@ -275,21 +253,22 @@ class WithdrawalView(APIView):
                 logger.error(f"Payout failed for {tx_id}: {e}")
                 tx.status = 'FAILED'
                 tx.save()
-                return Response({
-                    "status": "error",
-                    "message": "Payout processing failed"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return StandardResponse(
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    code="error",
+                    message="Payout processing failed"
+                )
 
-            return Response({
-                "status": "success",
-                "message": "Withdrawal processed successfully",
-                "transactionId": tx_id
-            }, status=status.HTTP_200_OK)
+            return StandardResponse(
+                data={"transactionId": tx_id},
+                message="Withdrawal processed successfully"
+            )
 
-        return Response({
-            "status": "error",
-            "message": "Invalid data"
-        }, status=status.HTTP_400_BAD_REQUEST)
+        return StandardResponse(
+            status=status.HTTP_400_BAD_REQUEST,
+            code="error",
+            message="Invalid data"
+        )
 
 class TransactionListView(ListAPIView):
     permission_classes = [IsAuthenticated]
@@ -312,7 +291,7 @@ class TransactionListView(ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        return StandardResponse(data=serializer.data)
 
 class VerifyDepositView(GenericAPIView):
     permission_classes = [IsAuthenticated]
@@ -366,26 +345,27 @@ class VerifyDepositView(GenericAPIView):
                 
              except Exception as e:
                 logger.error(f"Verification DB error: {e}")
-                return Response({
-                    "status": "error",
-                    "message": "Transaction verification failed"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return StandardResponse(
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    code="error",
+                    message="Transaction verification failed"
+                )
 
-        return Response({
-            "status": "pending",
-            "message": "Payment not verified yet or failed"
-        }, status=status.HTTP_200_OK)
+        return StandardResponse(
+            status=status.HTTP_200_OK,
+            code="pending",
+            message="Payment not verified yet or failed"
+        )
 
     def get_success_response(self, tx, wallet):
-        return Response({
-            "status": "success",
-            "data": {
+        return StandardResponse(
+            data={
                 "reference": tx.reference,
                 "status": "success",
                 "amount": float(tx.amount),
                 "currency": wallet.currency
             }
-        }, status=status.HTTP_200_OK)
+        )
 
 class TransactPayWebhookView(APIView):
     permission_classes = [AllowAny]
@@ -395,14 +375,14 @@ class TransactPayWebhookView(APIView):
         # Assuming TransactPay sends reference in payload
         reference = data.get('reference') or data.get('data', {}).get('reference')
         if not reference:
-            return Response({"status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+            return StandardResponse(status=status.HTTP_400_BAD_REQUEST, code="error", message="Missing reference")
         try:
             tx = Transaction.objects.get(reference=reference)
         except Transaction.DoesNotExist:
             logger.warning(f"TransactPay Webhook: Transaction not found for reference {reference}")
-            return Response({"status": "success"}, status=status.HTTP_200_OK)
+            return StandardResponse(message="Transaction not found")
         if tx.status == 'SUCCESSFUL':
-            return Response({"status": "success"}, status=status.HTTP_200_OK)
+            return StandardResponse(message="Transaction already successful")
         
         client = TransactPayClient()
         verification = client.verify_payment(reference)
@@ -419,8 +399,8 @@ class TransactPayWebhookView(APIView):
                 user = User.objects.get(id=wallet.user_id)
                 notify_balance_update(user)
             except Exception:
-                return Response({"status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        return Response({"status": "success"}, status=status.HTTP_200_OK)
+                return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error updating transaction")
+        return StandardResponse(message="Webhook processed")
 
 class NOWPaymentsWebhookView(APIView):
     permission_classes = [AllowAny]
@@ -430,23 +410,23 @@ class NOWPaymentsWebhookView(APIView):
         secret_key = settings.NOWPAYMENTS_IPN_SECRET
         data = request.data
         if not x_signature or not secret_key:
-            return Response({"status": "invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+            return StandardResponse(status=status.HTTP_403_FORBIDDEN, code="error", message="Missing signature or secret")
         if not verify_nowpayments_signature(secret_key, x_signature, data):
-            return Response({"status": "invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+            return StandardResponse(status=status.HTTP_403_FORBIDDEN, code="error", message="Invalid signature")
         order_id = data.get('order_id')
         payment_status = data.get('payment_status')
         pay_currency = data.get('pay_currency')
         if not order_id:
-            return Response({"status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+            return StandardResponse(status=status.HTTP_400_BAD_REQUEST, code="error", message="Missing order_id")
         try:
             tx = Transaction.objects.get(reference=order_id)
         except Transaction.DoesNotExist:
             logger.warning(f"NOWPayments Webhook: Transaction not found for order_id {order_id}")
-            return Response({"status": "success"}, status=status.HTTP_200_OK)
+            return StandardResponse(message="Transaction not found")
         if tx.status == 'SUCCESSFUL':
-            return Response({"status": "success"}, status=status.HTTP_200_OK)
+            return StandardResponse(message="Transaction already successful")
         if tx.payment_currency and pay_currency and tx.payment_currency.lower() != pay_currency.lower():
-            return Response({"status": "pending"}, status=status.HTTP_200_OK)
+            return StandardResponse(message="Currency mismatch, pending")
         if payment_status in ['finished', 'confirmed', 'sending']:
             try:
                 tx.status = 'SUCCESSFUL'
@@ -457,5 +437,5 @@ class NOWPaymentsWebhookView(APIView):
                 user = User.objects.get(id=wallet.user_id)
                 notify_balance_update(user)
             except Exception:
-                return Response({"status": "error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        return Response({"status": "success"}, status=status.HTTP_200_OK)
+                return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error updating transaction")
+        return StandardResponse(message="Webhook processed")

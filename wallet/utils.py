@@ -11,6 +11,7 @@ from django.conf import settings
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives import hashes
+from middleman_api.exceptions import GatewayError
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ class TransactPayClient:
             logger.error(f"TransactPay create order error: {str(e)}")
             if e.response:
                 logger.error(f"TransactPay response: {e.response.text}")
-            return None
+            raise GatewayError(f"TransactPay Error: {str(e)}")
 
     def pay_order(self, reference, payment_option="bank-transfer"):
         """
@@ -171,7 +172,7 @@ class TransactPayClient:
             logger.error(f"TransactPay pay order error: {str(e)}")
             if e.response:
                 logger.error(f"TransactPay response: {e.response.text}")
-            return None
+            raise GatewayError(f"TransactPay Error: {str(e)}")
 
     def get_fee(self, amount, currency='NGN', payment_option='bank-transfer'):
         """
@@ -199,7 +200,7 @@ class TransactPayClient:
             logger.error(f"TransactPay get fee error: {str(e)}")
             if e.response:
                 logger.error(f"TransactPay response: {e.response.text}")
-            return None
+            raise GatewayError(f"TransactPay Error: {str(e)}")
 
     def initialize_payment(self, reference, amount, email, redirect_url):
         """
@@ -300,7 +301,7 @@ class NOWPaymentsClient:
             logger.error(f"NOWPayments invoice error: {str(e)}")
             if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
-            return None
+            raise GatewayError(f"NOWPayments Error: {str(e)}")
 
     def create_payment(self, order_id, price_amount, pay_currency="USDTBSC", price_currency="usd"):
         """
@@ -328,7 +329,7 @@ class NOWPaymentsClient:
             logger.error(f"NOWPayments payment error: {str(e)}")
             if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
-            return None
+            raise GatewayError(f"NOWPayments Error: {str(e)}")
 
     def get_estimated_price(self, amount, currency_from='usd', currency_to='usdtbsc'):
         """
@@ -349,7 +350,7 @@ class NOWPaymentsClient:
             logger.error(f"NOWPayments estimate error: {str(e)}")
             if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
-            return None
+            raise GatewayError(f"NOWPayments Error: {str(e)}")
 
     def get_payment_status_by_order_id(self, order_id):
         """

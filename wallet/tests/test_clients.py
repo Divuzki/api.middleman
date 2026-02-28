@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from wallet.utils import TransactPayClient, NOWPaymentsClient
+from middleman_api.exceptions import GatewayError
 import requests
 
 class TestTransactPayClient(unittest.TestCase):
@@ -49,11 +50,9 @@ class TestTransactPayClient(unittest.TestCase):
         # Mock API error (RequestException)
         mock_post.side_effect = requests.RequestException("API Connection Error")
 
-        # Call method
-        result = self.client.get_fee(amount=1000)
-
-        # Assertions
-        self.assertIsNone(result)
+        # Call method and assert GatewayError
+        with self.assertRaises(GatewayError):
+            self.client.get_fee(amount=1000)
 
     @patch('wallet.utils.TransactPayClient._encrypt_payload')
     def test_get_fee_encryption_failure(self, mock_encrypt):
@@ -112,8 +111,6 @@ class TestNOWPaymentsClient(unittest.TestCase):
         # Mock API error (RequestException)
         mock_get.side_effect = requests.RequestException("API Connection Error")
 
-        # Call method
-        result = self.client.get_estimated_price(amount=100)
-
-        # Assertions
-        self.assertIsNone(result)
+        # Call method and assert GatewayError
+        with self.assertRaises(GatewayError):
+            self.client.get_estimated_price(amount=100)

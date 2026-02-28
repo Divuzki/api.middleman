@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, filters, pagination, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound, APIException
 from django.db.models import Q
 from .models import Wager, ChatMessage
 from .serializers import WagerSerializer, ChatMessageSerializer
@@ -9,6 +10,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from .signals import send_wager_notification
 from .services import WagerService
+from middleman_api.utils import StandardResponse
 
 class StandardResultsSetPagination(pagination.PageNumberPagination):
     page_size = 10
@@ -92,14 +94,14 @@ class WagerViewSet(viewsets.ModelViewSet):
                 notify_badge_counts(wager.opponent)
                 
             serializer = self.get_serializer(wager)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return StandardResponse(data=serializer.data, status=status.HTTP_201_CREATED)
             
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError(str(e))
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return Response({"detail": "Failed to create wager"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            raise APIException("Failed to create wager")
 
     @action(detail=True, methods=['post'], url_path='join')
     def join_wager(self, request, id=None):
@@ -109,14 +111,14 @@ class WagerViewSet(viewsets.ModelViewSet):
         try:
             wager = WagerService.join_wager(request.user, wager, pin)
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError(str(e))
         
         # Notify
         self._notify_wager_update(wager)
         notify_badge_counts(wager.creator)
         notify_badge_counts(wager.opponent)
         
-        return Response(self.get_serializer(wager).data)
+        return StandardResponse(data=self.get_serializer(wager).data)
 
     @action(detail=True, methods=['post'], url_path='draw/request')
     def draw_request(self, request, id=None):
@@ -127,14 +129,11 @@ class WagerViewSet(viewsets.ModelViewSet):
         is_opponent = str(wager.opponent_id) == str(request.user.id) if wager.opponent_id else False
         
         if not (is_creator or is_opponent):
-            return Response({"detail": "Not a participant."}, status=status.HTTP_403_FORBIDDEN)
+            raise PermissionDenied("Not a participant.")
 
         # 2. Validate Status
         if wager.status != 'MATCHED':
-            return Response(
-                {"detail": "Draw can only be requested for matched wagers."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            raise ValidationError("Draw can only be requested for matched wagers.")
             
         # 3. Update State
         wager.drawRequestedBy = request.user
@@ -151,7 +150,7 @@ class WagerViewSet(viewsets.ModelViewSet):
                 f"{request.user.first_name} requested a draw for '{wager.title}'"
             )
 
-        return Response(self.get_serializer(wager).data)
+        return StandardResponse(data=self.get_serializer(wager).data)
 
     @action(detail=True, methods=['post'], url_path='draw/accept')
     def draw_accept(self, request, id=None):
@@ -159,11 +158,11 @@ class WagerViewSet(viewsets.ModelViewSet):
         
         # 1. Validate Pending Request
         if wager.drawStatus != 'pending':
-            return Response({"detail": "No pending draw request."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("No pending draw request.")
             
         # 2. Validate User (Must NOT be requester)
         if str(wager.drawRequestedBy_id) == str(request.user.id):
-            return Response({"detail": "You cannot accept your own request."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("You cannot accept your own request.")
 
         # 3. Update State
         wager.status = 'COMPLETED'
@@ -179,7 +178,7 @@ class WagerViewSet(viewsets.ModelViewSet):
                 f"{request.user.first_name} accepted the draw for '{wager.title}'"
             )
 
-        return Response(self.get_serializer(wager).data)
+        return StandardResponse(data=self.get_serializer(wager).data)
 
     @action(detail=True, methods=['post'], url_path='draw/reject')
     def draw_reject(self, request, id=None):
@@ -187,11 +186,11 @@ class WagerViewSet(viewsets.ModelViewSet):
         
         # 1. Validate Pending Request
         if wager.drawStatus != 'pending':
-            return Response({"detail": "No pending draw request."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("No pending draw request.")
             
         # 2. Validate User (Must NOT be requester)
         if str(wager.drawRequestedBy_id) == str(request.user.id):
-            return Response({"detail": "You cannot reject your own request."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("You cannot reject your own request.")
 
         # 3. Update State
         requester = wager.drawRequestedBy
@@ -208,7 +207,7 @@ class WagerViewSet(viewsets.ModelViewSet):
                 f"{request.user.first_name} rejected the draw for '{wager.title}'"
             )
 
-        return Response(self.get_serializer(wager).data)
+        return StandardResponse(data=self.get_serializer(wager).data)
 
     @action(detail=True, methods=['get', 'post'], url_path='messages')
     def messages(self, request, id=None):
@@ -220,17 +219,17 @@ class WagerViewSet(viewsets.ModelViewSet):
         is_opponent = str(wager.opponent_id) == str(request.user.id) if wager.opponent_id else False
         
         if not (is_creator or is_opponent):
-            return Response({"detail": "Not a participant."}, status=status.HTTP_403_FORBIDDEN)
+            raise PermissionDenied("Not a participant.")
 
         if request.method == 'GET':
             messages = ChatMessage.objects.filter(wager=wager).order_by('timestamp')
             serializer = ChatMessageSerializer(messages, many=True)
-            return Response(serializer.data)
+            return StandardResponse(data=serializer.data)
         
         elif request.method == 'POST':
             text = request.data.get('text')
             if not text:
-                return Response({"detail": "Text is required."}, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError("Text is required.")
             
             message = ChatMessage.objects.create(
                 wager=wager,
@@ -250,7 +249,7 @@ class WagerViewSet(viewsets.ModelViewSet):
                 }
             )
             
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return StandardResponse(data=serializer.data, status=status.HTTP_201_CREATED)
 
     def _notify_wager_update(self, wager):
         channel_layer = get_channel_layer()
