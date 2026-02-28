@@ -3,6 +3,7 @@ from rest_framework.generics import ListAPIView, GenericAPIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound, APIException
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect
@@ -173,11 +174,7 @@ class DepositView(APIView):
                         raise GatewayError("Failed to generate payment link")
                 
                 else:
-                    return StandardResponse(
-                        status=status.HTTP_400_BAD_REQUEST,
-                        code="error",
-                        message=f"Unsupported currency: {currency}"
-                    )
+                    raise ValidationError(f"Unsupported currency: {currency}")
 
                 if payment_details:
                     response_data.update(payment_details)
@@ -192,11 +189,7 @@ class DepositView(APIView):
                 # Re-raise exception to be handled by custom_exception_handler
                 raise e
         
-        return StandardResponse(
-            status=status.HTTP_400_BAD_REQUEST,
-            code="error",
-            message="Invalid amount"
-        )
+        raise ValidationError("Invalid amount")
 
 class WithdrawalView(APIView):
     permission_classes = [IsAuthenticated]
@@ -212,20 +205,12 @@ class WithdrawalView(APIView):
             # Verify PIN (using the User model in default DB)
             user = request.user
             if not user.transaction_pin or not user.verify_pin(pin):
-                return StandardResponse(
-                    status=status.HTTP_400_BAD_REQUEST,
-                    code="error",
-                    message="Invalid PIN"
-                )
+                raise ValidationError("Invalid PIN")
 
             # Check Balance
             wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
             if wallet.balance < amount:
-                return StandardResponse(
-                    status=status.HTTP_400_BAD_REQUEST,
-                    code="error",
-                    message="Insufficient funds"
-                )
+                raise ValidationError("Insufficient funds")
             
             # Calculate USD/NGN amounts
             converted = get_converted_amounts(amount, currency)
@@ -253,22 +238,14 @@ class WithdrawalView(APIView):
                 logger.error(f"Payout failed for {tx_id}: {e}")
                 tx.status = 'FAILED'
                 tx.save()
-                return StandardResponse(
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    code="error",
-                    message="Payout processing failed"
-                )
+                raise APIException("Payout processing failed")
 
             return StandardResponse(
                 data={"transactionId": tx_id},
                 message="Withdrawal processed successfully"
             )
 
-        return StandardResponse(
-            status=status.HTTP_400_BAD_REQUEST,
-            code="error",
-            message="Invalid data"
-        )
+        raise ValidationError("Invalid data")
 
 class TransactionListView(ListAPIView):
     permission_classes = [IsAuthenticated]
@@ -345,11 +322,7 @@ class VerifyDepositView(GenericAPIView):
                 
              except Exception as e:
                 logger.error(f"Verification DB error: {e}")
-                return StandardResponse(
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    code="error",
-                    message="Transaction verification failed"
-                )
+                raise APIException("Transaction verification failed")
 
         return StandardResponse(
             status=status.HTTP_200_OK,

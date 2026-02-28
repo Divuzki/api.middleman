@@ -1,6 +1,8 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError, PermissionDenied, APIException
+from middleman_api.utils import StandardResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
@@ -60,7 +62,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, pk=None):
         agreement = self.get_object()
         serializer = self.get_serializer(agreement)
-        return Response(serializer.data)
+        return StandardResponse(serializer.data)
 
     @action(detail=True, methods=['post'], url_path='join')
     def join_agreement(self, request, pk=None):
@@ -68,10 +70,10 @@ class AgreementViewSet(viewsets.ModelViewSet):
         user = request.user
 
         if agreement.initiator == user:
-            return Response({"error": "Initiator cannot join their own agreement"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("Initiator cannot join their own agreement")
         
         if agreement.counterparty and agreement.counterparty != user:
-            return Response({"error": "Agreement already has a counterparty"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("Agreement already has a counterparty")
 
         agreement.counterparty = user
         if agreement.creator_role == 'buyer':
@@ -88,7 +90,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.initiator)
         notify_badge_counts(user)
 
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='accept-offer')
     def accept_offer(self, request, pk=None):
@@ -98,16 +100,16 @@ class AgreementViewSet(viewsets.ModelViewSet):
         user = request.user
         
         if not offer_id:
-            return Response({"error": "offerId is required"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("offerId is required")
 
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
         try:
             agreement, offer = AgreementService.accept_offer(user, agreement, offer, pin)
         except ValueError as e:
-             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+             raise ValidationError(str(e))
         except Exception as e:
-             return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             raise APIException(f"Transaction failed: {str(e)}")
         
         # Notify via WebSocket
         self._notify_agreement_update(agreement)
@@ -120,7 +122,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
 
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='reject-offer')
     def reject_offer(self, request, pk=None):
@@ -128,14 +130,14 @@ class AgreementViewSet(viewsets.ModelViewSet):
         offer_id = request.data.get('offerId')
         
         if not offer_id:
-            return Response({"error": "offerId is required"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("offerId is required")
 
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
         try:
             offer = AgreementService.reject_offer(request.user, agreement, offer)
         except ValueError as e:
-             return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+             raise PermissionDenied(str(e))
         
         self._notify_offer_update(offer)
         self._notify_agreement_update(agreement) # Update last message/status if needed
@@ -143,7 +145,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         for participant in self._get_participants(agreement):
             notify_badge_counts(participant)
         
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='deliver')
     def deliver_agreement(self, request, pk=None):
@@ -153,15 +155,17 @@ class AgreementViewSet(viewsets.ModelViewSet):
         try:
             agreement = AgreementService.deliver_agreement(request.user, agreement, proof)
         except ValueError as e:
-             status_code = status.HTTP_403_FORBIDDEN if "Only seller" in str(e) else status.HTTP_400_BAD_REQUEST
-             return Response({"error": str(e)}, status=status_code)
+             if "Only seller" in str(e):
+                 raise PermissionDenied(str(e))
+             else:
+                 raise ValidationError(str(e))
         
         self._notify_agreement_update(agreement)
         
         notify_badge_counts(agreement.buyer) # Buyer needs to confirm now
         notify_badge_counts(agreement.seller)
 
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     def _get_participants(self, agreement):
         users = set()
@@ -282,7 +286,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         offer_id = request.data.get('offerId')
         
         if not offer_id:
-            return Response({"error": "offerId is required"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("offerId is required")
 
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
@@ -291,7 +295,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         self._notify_agreement_update(agreement)
         self._notify_offer_update(offer)
         
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='fund')
     def fund_agreement(self, request, pk=None):
@@ -306,7 +310,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
 
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='confirm')
     def confirm_agreement(self, request, pk=None):
@@ -315,10 +319,12 @@ class AgreementViewSet(viewsets.ModelViewSet):
         try:
             agreement = AgreementService.confirm_agreement(request.user, agreement)
         except ValueError as e:
-            status_code = status.HTTP_403_FORBIDDEN if "Only buyer" in str(e) else status.HTTP_400_BAD_REQUEST
-            return Response({"error": str(e)}, status=status_code)
+            if "Only buyer" in str(e):
+                raise PermissionDenied(str(e))
+            else:
+                raise ValidationError(str(e))
         except Exception as e:
-             return Response({"error": f"Transaction failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             raise APIException(f"Transaction failed: {str(e)}")
 
         self._notify_agreement_update(agreement)
 
@@ -326,7 +332,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
 
-        return Response(self.get_serializer(agreement).data)
+        return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='complete')
     def complete_agreement(self, request, pk=None):
@@ -342,12 +348,12 @@ class AgreementViewSet(viewsets.ModelViewSet):
         if request.method == 'GET':
             messages = agreement.messages.all().order_by('timestamp')
             serializer = ChatMessageSerializer(messages, many=True)
-            return Response(serializer.data)
+            return StandardResponse(serializer.data)
         
         elif request.method == 'POST':
             text = request.data.get('text')
             if not text:
-                return Response({"error": "text is required"}, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError("text is required")
             
             message = ChatMessage.objects.create(
                 agreement=agreement,
@@ -358,7 +364,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
             
             self._notify_chat_message(message)
             
-            return Response(ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+            return StandardResponse(data=ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='offers')
     def create_offer(self, request, pk=None):
@@ -369,7 +375,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         timeline = request.data.get('timeline')
         
         if not all([amount, description, timeline]):
-            return Response({"error": "amount, description, and timeline are required"}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError("amount, description, and timeline are required")
             
         offer, message = AgreementService.create_offer(request.user, agreement, amount, description, timeline)
         
@@ -380,4 +386,4 @@ class AgreementViewSet(viewsets.ModelViewSet):
             if participant != request.user:
                 notify_badge_counts(participant)
 
-        return Response(ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+        return StandardResponse(data=ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
