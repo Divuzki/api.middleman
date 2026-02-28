@@ -99,6 +99,7 @@ class ChatMessage(models.Model):
     TYPE_CHOICES = [
         ('text', 'Text'),
         ('offer', 'Offer'),
+        ('system', 'System'),
     ]
 
     id = models.CharField(max_length=50, primary_key=True, default=generate_message_id)

@@ -110,6 +110,12 @@ class Wager(models.Model):
 
 
 class ChatMessage(models.Model):
+    TYPE_CHOICES = [
+        ('text', 'Text'),
+        ('offer', 'Offer'),
+        ('system', 'System'),
+    ]
+
     id = models.CharField(max_length=50, primary_key=True, editable=False)
     wager = models.ForeignKey(Wager, on_delete=models.CASCADE, related_name='messages')
     sender = models.ForeignKey(
@@ -119,7 +125,7 @@ class ChatMessage(models.Model):
         related_name='wager_messages'
     )
     text = models.TextField()
-    message_type = models.CharField(max_length=20, default='text')
+    message_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='text')
     timestamp = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

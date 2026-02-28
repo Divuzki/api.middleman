@@ -121,7 +121,32 @@ class DepositView(APIView):
                             
                             if pay_response and pay_response.get('status') == 'success':
                                 data = pay_response.get('data', {})
-                                payment_details = data
+                                # Map flat response to nested structure for frontend
+                                payment_details = {
+                                    "paymentDetail": {
+                                        "redirectUrl": data.get("payment", {}).get("RedirectUrl"),
+                                        "recipientAccount": data.get("BankTransfer", {}).get("account_number"),
+                                        "paymentReference": data.get("order", {}).get("reference"),
+                                        "cardToken": None 
+                                    },
+                                    "bankTransferDetails": {
+                                        "bankAccount": data.get("BankTransfer", {}).get("account_number"),
+                                        "accountName": data.get("BankTransfer", {}).get("account_name"),
+                                        "bankName": data.get("BankTransfer", {}).get("bank_name")
+                                    },
+                                    "orderPayment": {
+                                        "orderId": data.get("order", {}).get("orderId"), 
+                                        "orderPaymentReference": data.get("order", {}).get("reference"),
+                                        "currency": data.get("order", {}).get("currency"),
+                                        "totalAmount": data.get("order", {}).get("amount"),
+                                        "statusId": data.get("order", {}).get("statusId"),
+                                        "orderPaymentResponseCode": data.get("order", {}).get("responseCode"),
+                                        "orderPaymentResponseMessage": data.get("order", {}).get("responseMessage"),
+                                        "orderPaymentInstrument": data.get("order", {}).get("paymentInstrument"),
+                                        "remarks": data.get("order", {}).get("remarks"),
+                                        "fee": data.get("order", {}).get("fee")
+                                    }
+                                }
                             else:
                                 logger.error(f"TransactPay Pay Order failed for ref {ref}")
                                 raise GatewayError("Failed to initiate bank transfer")
