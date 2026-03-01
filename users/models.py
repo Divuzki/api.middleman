@@ -114,6 +114,8 @@ class DeviceProfile(models.Model):
     # Human readable name (e.g. "iPhone 15 Pro", "Samsung S24")
     device_name = models.CharField(max_length=255, blank=True)
     
+    platform = models.CharField(max_length=20, choices=[('ios', 'iOS'), ('android', 'Android'), ('web', 'Web')], default='android')
+
     # The actual FCM token for push delivery
     fcm_device = models.OneToOneField(
         FCMDevice, 

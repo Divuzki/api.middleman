@@ -27,7 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'email', 'first_name', 'last_name', 'image_url', 'firebase_uid', 'isIdentityVerified', 'has_set_account_pin']
-        read_only_fields = ['email', 'firebase_uid', 'isIdentityVerified', 'has_set_account_pin', 'passowrd']
+        read_only_fields = ['email', 'firebase_uid', 'isIdentityVerified', 'has_set_account_pin', 'password']
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False)
@@ -117,7 +117,6 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
     device_uuid = serializers.CharField(max_length=255)
     device_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     fcm_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    platform = serializers.ChoiceField(choices=[('ios', 'ios'), ('android', 'android'), ('web', 'web')], write_only=True, required=False)
     
     class Meta:
         model = DeviceProfile
@@ -129,7 +128,7 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
         device_uuid = validated_data.get('device_uuid')
         device_name = validated_data.get('device_name', '')
         fcm_token = validated_data.pop('fcm_token', None)
-        platform = validated_data.pop('platform', 'android') # Default to android if not specified? Or maybe required.
+        platform = validated_data.get('platform', 'android')
 
         # Check if device exists
         device_profile, created = DeviceProfile.objects.update_or_create(
@@ -137,7 +136,8 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
             defaults={
                 'user': user,
                 'device_name': device_name,
-                'is_active': True
+                'is_active': True,
+                'platform': platform
             }
         )
 

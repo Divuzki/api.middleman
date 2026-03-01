@@ -69,6 +69,8 @@ class AgreementSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
 
     def get_status(self, obj):
+        if obj.status in ['terms_locked', 'secured']:
+            return 'active'
         return obj.status
 
     def get_initialOffer(self, obj):
