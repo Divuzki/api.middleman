@@ -101,7 +101,7 @@ class Wager(models.Model):
         
         if not self.share_link:
             # Placeholder for share link generation logic
-            self.share_link = f"middleman.app/wager/{self.id}"
+            self.share_link = f"{settings.FRONTEND_URL}/wager/{self.id}"
             
         super().save(*args, **kwargs)
 

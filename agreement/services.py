@@ -180,6 +180,7 @@ class AgreementService:
         """
         Locks terms of an agreement based on an offer.
         """
+        converted = get_converted_amounts(offer.amount, agreement.currency)
         agreement.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
         agreement.amount_usd = converted.get('amount_usd') or offer.amount_usd
         agreement.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
@@ -190,5 +191,23 @@ class AgreementService:
         
         offer.status = 'accepted'
         offer.save()
+        
+        return agreement
+
+    @staticmethod
+    def dispute_agreement(user, agreement, reason=None):
+        """
+        Handles agreement dispute.
+        """
+        participants = [agreement.initiator, agreement.counterparty, agreement.buyer, agreement.seller]
+        if user not in participants:
+             raise ValueError("Not a participant")
+
+        allowed_statuses = ['active', 'secured', 'delivered']
+        if agreement.status not in allowed_statuses:
+             raise ValueError(f"Cannot dispute agreement in {agreement.status} status")
+
+        agreement.status = 'disputed'
+        agreement.save()
         
         return agreement

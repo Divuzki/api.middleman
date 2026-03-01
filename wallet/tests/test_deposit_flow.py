@@ -22,9 +22,16 @@ class DepositFlowTests(APITestCase):
         settings.NOWPAYMENTS_IPN_SECRET = 'test_secret_key'
 
     @patch('wallet.views.notify_balance_update')
+    @patch('wallet.views.TransactPayClient.get_fee')
     @patch('wallet.views.TransactPayClient.create_order')
     @patch('wallet.views.TransactPayClient.pay_order')
-    def test_ngn_deposit_flow(self, mock_pay, mock_create, mock_notify):
+    def test_ngn_deposit_flow(self, mock_pay, mock_create, mock_get_fee, mock_notify):
+        # 0. Mock Get Fee
+        mock_get_fee.return_value = {
+            'status': 'success',
+            'data': {'fee': '175.00'}
+        }
+        
         # 1. Mock Create Order
         mock_create.return_value = {
             'status': 'success',
@@ -48,11 +55,13 @@ class DepositFlowTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Verify bank details are in response
-        self.assertEqual(response.data['bank_name'], 'Test Bank')
-        self.assertEqual(response.data['account_number'], '1234567890')
+        self.assertEqual(response.data['data']['bankTransferDetails']['bankName'], 'Test Bank')
+        self.assertEqual(response.data['data']['bankTransferDetails']['bankAccount'], '1234567890')
         
         # Verify Transaction Created (PENDING)
-        tx = Transaction.objects.get(wallet=self.wallet, amount=5175.00) # 5000 + fee (1.5% + 100) = 5000 + 75 + 100 = 5175
+        # Transaction amount stores the net amount (5000), fee is separate or calculated on the fly for payment
+        tx = Transaction.objects.get(wallet=self.wallet, amount=5000.00) 
+        self.assertEqual(response.data['data']['total_charged'], 5175.00)
         self.assertEqual(tx.status, 'PENDING')
         self.assertEqual(tx.payment_method, 'TRANSACTPAY')
         
@@ -78,7 +87,7 @@ class DepositFlowTests(APITestCase):
         response = self.client.post(url, data)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['currency'], 'USD')
+        self.assertEqual(response.data['data']['currency'], 'USD')
         
         # Verify Transaction Created (PENDING)
         tx = Transaction.objects.filter(wallet=self.wallet, payment_method='NOWPAYMENTS').latest('created_at')

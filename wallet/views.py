@@ -121,30 +121,36 @@ class DepositView(APIView):
                             
                             if pay_response and pay_response.get('status') == 'success':
                                 data = pay_response.get('data', {})
+                                
+                                # Helper to get nested or flat data
+                                bank_data = data.get("BankTransfer") or data
+                                payment_data = data.get("payment") or data
+                                order_data = data.get("order") or data
+
                                 # Map flat response to nested structure for frontend
                                 payment_details = {
                                     "paymentDetail": {
-                                        "redirectUrl": data.get("payment", {}).get("RedirectUrl"),
-                                        "recipientAccount": data.get("BankTransfer", {}).get("account_number"),
-                                        "paymentReference": data.get("order", {}).get("reference"),
+                                        "redirectUrl": payment_data.get("RedirectUrl"),
+                                        "recipientAccount": bank_data.get("account_number"),
+                                        "paymentReference": order_data.get("reference"),
                                         "cardToken": None 
                                     },
                                     "bankTransferDetails": {
-                                        "bankAccount": data.get("BankTransfer", {}).get("account_number"),
-                                        "accountName": data.get("BankTransfer", {}).get("account_name"),
-                                        "bankName": data.get("BankTransfer", {}).get("bank_name")
+                                        "bankAccount": bank_data.get("account_number"),
+                                        "accountName": bank_data.get("account_name"),
+                                        "bankName": bank_data.get("bank_name")
                                     },
                                     "orderPayment": {
-                                        "orderId": data.get("order", {}).get("orderId"), 
-                                        "orderPaymentReference": data.get("order", {}).get("reference"),
-                                        "currency": data.get("order", {}).get("currency"),
-                                        "totalAmount": data.get("order", {}).get("amount"),
-                                        "statusId": data.get("order", {}).get("statusId"),
-                                        "orderPaymentResponseCode": data.get("order", {}).get("responseCode"),
-                                        "orderPaymentResponseMessage": data.get("order", {}).get("responseMessage"),
-                                        "orderPaymentInstrument": data.get("order", {}).get("paymentInstrument"),
-                                        "remarks": data.get("order", {}).get("remarks"),
-                                        "fee": data.get("order", {}).get("fee")
+                                        "orderId": order_data.get("orderId"), 
+                                        "orderPaymentReference": order_data.get("reference"),
+                                        "currency": order_data.get("currency"),
+                                        "totalAmount": order_data.get("amount"),
+                                        "statusId": order_data.get("statusId"),
+                                        "orderPaymentResponseCode": order_data.get("responseCode"),
+                                        "orderPaymentResponseMessage": order_data.get("responseMessage"),
+                                        "orderPaymentInstrument": order_data.get("paymentInstrument"),
+                                        "remarks": order_data.get("remarks"),
+                                        "fee": order_data.get("fee")
                                     }
                                 }
                             else:

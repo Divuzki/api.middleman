@@ -341,6 +341,23 @@ class AgreementViewSet(viewsets.ModelViewSet):
         """
         return self.confirm_agreement(request, pk)
 
+    @action(detail=True, methods=['post'], url_path='dispute')
+    def dispute(self, request, pk=None):
+        agreement = self.get_object()
+        reason = request.data.get('reason')
+        
+        try:
+            agreement = AgreementService.dispute_agreement(request.user, agreement, reason)
+        except ValueError as e:
+             raise ValidationError(str(e))
+        
+        self._notify_agreement_update(agreement)
+        
+        for participant in self._get_participants(agreement):
+            notify_badge_counts(participant)
+
+        return StandardResponse(self.get_serializer(agreement).data)
+
     @action(detail=True, methods=['get', 'post'], url_path='messages')
     def messages(self, request, pk=None):
         agreement = self.get_object()

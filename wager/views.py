@@ -103,6 +103,53 @@ class WagerViewSet(viewsets.ModelViewSet):
             traceback.print_exc()
             raise APIException("Failed to create wager")
 
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, id=None):
+        wager = self.get_object()
+        
+        try:
+            wager = WagerService.cancel_wager(request.user, wager)
+        except ValueError as e:
+            raise ValidationError(str(e))
+        
+        # Notify
+        notify_badge_counts(request.user)
+        self._notify_wager_update(wager)
+        
+        return StandardResponse(data=self.get_serializer(wager).data)
+
+    @action(detail=True, methods=['post'], url_path='dispute')
+    def dispute(self, request, id=None):
+        wager = self.get_object()
+        reason = request.data.get('reason')
+        
+        try:
+            wager = WagerService.dispute_wager(request.user, wager, reason)
+        except ValueError as e:
+            raise ValidationError(str(e))
+        
+        # Notify
+        notify_badge_counts(wager.creator)
+        if wager.opponent:
+            notify_badge_counts(wager.opponent)
+            
+        self._notify_wager_update(wager)
+        
+        # Notify other party specifically about dispute
+        # Determine who is the other party
+        is_creator = str(wager.creator_id) == str(request.user.id)
+        other_party = wager.opponent if is_creator else wager.creator
+        
+        if other_party:
+            user_name = request.user.first_name or request.user.email
+            send_wager_notification(
+                wager, 
+                "Wager Disputed", 
+                f"{user_name} has disputed '{wager.title}'"
+            )
+        
+        return StandardResponse(data=self.get_serializer(wager).data)
+
     @action(detail=True, methods=['post'], url_path='join')
     def join_wager(self, request, id=None):
         wager = self.get_object()
@@ -156,20 +203,14 @@ class WagerViewSet(viewsets.ModelViewSet):
     def draw_accept(self, request, id=None):
         wager = self.get_object()
         
-        # 1. Validate Pending Request
-        if wager.drawStatus != 'pending':
-            raise ValidationError("No pending draw request.")
-            
-        # 2. Validate User (Must NOT be requester)
-        if str(wager.drawRequestedBy_id) == str(request.user.id):
-            raise ValidationError("You cannot accept your own request.")
-
-        # 3. Update State
-        wager.status = 'COMPLETED'
-        wager.drawStatus = 'accepted'
-        wager.save()
+        try:
+            wager = WagerService.accept_draw(request.user, wager)
+        except ValueError as e:
+            raise ValidationError(str(e))
+        except Exception:
+            raise APIException("Failed to accept draw")
         
-        # 4. Notify Requester
+        # Notify Requester
         if wager.drawRequestedBy:
             notify_badge_counts(wager.drawRequestedBy)
             send_wager_notification(
