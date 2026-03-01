@@ -20,6 +20,9 @@ TRANSACTPAY_FEE_PERCENTAGE = 0.015  # 1.5%
 NOWPAYMENTS_FEE_PERCENTAGE = 0.005  # 0.5%
 
 class TransactPayClient:
+    BASE_URL_PROD = "https://payment-api-service.transactpay.ai/payment"
+    BASE_URL_SANDBOX = "https://payment-api-service.transactpay.ai/payment"
+
     def __init__(self):
         self.api_key = settings.TRANSACTPAY_API_KEY
         self.secret_key = settings.TRANSACTPAY_SECRET_KEY
@@ -27,14 +30,35 @@ class TransactPayClient:
         self.mode = settings.TRANSACTPAY_MODE # SANDBOX or PRODUCTION
         
         if self.mode == "PRODUCTION":
-            self.base_url = "https://payment-api-service.transactpay.ai/payment"
+            self.base_url = self.BASE_URL_PROD
         else:
-            self.base_url = "https://payment-api-service.transactpay.ai/payment"
+            self.base_url = self.BASE_URL_SANDBOX
             
         self.headers = {
             "api-key": self.api_key,
             "Content-Type": "application/json"
         }
+
+    def _mask_pii(self, payload):
+        """
+        Mask PII data in payload for logging.
+        """
+        if not payload or not isinstance(payload, dict):
+            return payload
+            
+        masked = payload.copy()
+        
+        # recursive masking for nested dictionaries
+        for key, value in masked.items():
+            if isinstance(value, dict):
+                masked[key] = self._mask_pii(value)
+            elif key in ['email', 'mobile', 'firstname', 'lastname']:
+                 if value and isinstance(value, str):
+                     if len(value) > 4:
+                         masked[key] = f"***{value[-4:]}"
+                     else:
+                         masked[key] = "***"
+        return masked
 
     def _encrypt_payload(self, payload):
         """
@@ -128,6 +152,8 @@ class TransactPayClient:
             }
         }
         
+        logger.info(f"Creating TransactPay order: {json.dumps(self._mask_pii(payload))}")
+        
         encrypted_data = self._encrypt_payload(payload)
         if not encrypted_data:
             return None
@@ -157,6 +183,8 @@ class TransactPayClient:
             "country": "NG",
             "BankTransfer": {}
         }
+        
+        logger.info(f"Paying TransactPay order: {json.dumps(self._mask_pii(payload))}")
         
         encrypted_data = self._encrypt_payload(payload)
         if not encrypted_data:
@@ -271,6 +299,27 @@ class NOWPaymentsClient:
             "Content-Type": "application/json"
         }
 
+    def _mask_pii(self, payload):
+        """
+        Mask PII data in payload for logging.
+        """
+        if not payload or not isinstance(payload, dict):
+            return payload
+            
+        masked = payload.copy()
+        
+        # recursive masking for nested dictionaries
+        for key, value in masked.items():
+            if isinstance(value, dict):
+                masked[key] = self._mask_pii(value)
+            elif key in ['email', 'mobile', 'firstname', 'lastname']:
+                 if value and isinstance(value, str):
+                     if len(value) > 4:
+                         masked[key] = f"***{value[-4:]}"
+                     else:
+                         masked[key] = "***"
+        return masked
+
     def create_invoice(self, order_id, price_amount, pay_currency="USDTBSC", price_currency="ngn", success_url=None, cancel_url=None):
         """
         Create an invoice on NOWPayments.
@@ -293,7 +342,7 @@ class NOWPaymentsClient:
         }
 
         try:
-            logger.info(f"Creating NOWPayments invoice with payload: {json.dumps(payload)}")
+            logger.info(f"Creating NOWPayments invoice with payload: {json.dumps(self._mask_pii(payload))}")
             response = requests.post(url, json=payload, headers=self.headers, timeout=10)
             response.raise_for_status()
             return response.json()
@@ -318,10 +367,10 @@ class NOWPaymentsClient:
             "is_fixed_rate": True,
             "is_fee_paid_by_user": True
         }
-        logger.debug(f"NOWPayments payment payload: {payload}")
+        logger.debug(f"NOWPayments payment payload: {self._mask_pii(payload)}")
 
         try:
-            logger.info(f"Creating NOWPayments payment with payload: {json.dumps(payload)}")
+            logger.info(f"Creating NOWPayments payment with payload: {json.dumps(self._mask_pii(payload))}")
             response = requests.post(url, json=payload, headers=self.headers, timeout=10)
             response.raise_for_status()
             return response.json()
