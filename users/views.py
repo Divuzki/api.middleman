@@ -440,7 +440,7 @@ class UserActivitiesView(GenericAPIView):
 
         # Fetch Transactions
         if activity_type in ['all', 'transaction']:
-            transactions = Transaction.objects.filter(
+            transactions = Transaction.objects.exclude(status='PENDING').filter(
                 wallet__user_id=user.id
             ).order_by('-created_at')[:fetch_limit]
             

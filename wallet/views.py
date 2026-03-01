@@ -303,7 +303,7 @@ class TransactionListView(ListAPIView):
     def get_queryset(self):
         user_id = self.request.user.id
         wallet, _ = Wallet.objects.get_or_create(user_id=user_id)
-        queryset = Transaction.objects.filter(wallet=wallet)
+        queryset = Transaction.objects.filter(wallet=wallet).exclude(status='PENDING')
 
         # Filter by month and year if provided
         month = self.request.query_params.get('month')
