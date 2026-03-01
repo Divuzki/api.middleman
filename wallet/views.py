@@ -123,7 +123,25 @@ class DepositView(APIView):
                                 data = pay_response.get('data', {})
                                 
                                 # Helper to get nested or flat data
-                                bank_data = data.get("BankTransfer") or data
+                                sources = [
+                                    data.get("BankTransfer") or {},
+                                    data.get("payment") or {},
+                                    data
+                                ]
+
+                                def get_from_sources(keys):
+                                    for source in sources:
+                                        if not isinstance(source, dict): continue
+                                        for key in keys:
+                                            val = source.get(key)
+                                            if val:
+                                                return val
+                                    return None
+
+                                account_number = get_from_sources(['accountNumber', 'account_number'])
+                                account_name = get_from_sources(['accountName', 'account_name'])
+                                bank_name = get_from_sources(['bankName', 'bank_name', 'bankProviderName'])
+
                                 payment_data = data.get("payment") or data
                                 order_data = data.get("order") or data
 
@@ -131,14 +149,14 @@ class DepositView(APIView):
                                 payment_details = {
                                     "paymentDetail": {
                                         "redirectUrl": payment_data.get("RedirectUrl"),
-                                        "recipientAccount": bank_data.get("account_number"),
+                                        "recipientAccount": account_number,
                                         "paymentReference": order_data.get("reference"),
                                         "cardToken": None 
                                     },
                                     "bankTransferDetails": {
-                                        "bankAccount": bank_data.get("account_number"),
-                                        "accountName": bank_data.get("account_name"),
-                                        "bankName": bank_data.get("bank_name")
+                                        "bankAccount": account_number,
+                                        "accountName": account_name,
+                                        "bankName": bank_name
                                     },
                                     "orderPayment": {
                                         "orderId": order_data.get("orderId"), 
