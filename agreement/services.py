@@ -7,6 +7,30 @@ import uuid
 
 class AgreementService:
     @staticmethod
+    def join_agreement(user, agreement):
+        if agreement.initiator == user:
+            raise ValueError("Initiator cannot join their own agreement")
+        
+        # Use transaction to prevent race conditions
+        with transaction.atomic(using='agreement_db'):
+            # Lock the agreement row
+            agreement_locked = Agreement.objects.select_for_update().get(id=agreement.id)
+            
+            if agreement_locked.counterparty and agreement_locked.counterparty != user:
+                raise ValueError("Agreement already has a counterparty")
+            
+            agreement_locked.counterparty = user
+            if agreement_locked.creator_role == 'buyer':
+                agreement_locked.seller = user
+            else:
+                agreement_locked.buyer = user
+                
+            agreement_locked.status = 'awaiting_acceptance'
+            agreement_locked.save()
+            
+            return agreement_locked
+
+    @staticmethod
     def accept_offer(user, agreement, offer, pin=None):
         """
         Handles offer acceptance logic for both Buyer and Seller.
@@ -23,48 +47,59 @@ class AgreementService:
             if user.transaction_pin and not user.verify_pin(pin):
                 raise ValueError("Incorrect PIN")
             
-            with transaction.atomic(using='wallet_db'):
-                try:
-                    # Lock rows to prevent race conditions
-                    buyer_wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-                except Wallet.DoesNotExist:
-                    raise ValueError("Buyer wallet not found")
+            # Lock Agreement First (Agreement DB)
+            with transaction.atomic(using='agreement_db'):
+                agreement_locked = Agreement.objects.select_for_update().get(id=agreement.id)
+                
+                # Check if already active/secured to prevent double funding
+                if agreement_locked.status in ['active', 'secured', 'delivered', 'completed']:
+                     raise ValueError("Agreement is already active")
 
-                if buyer_wallet.balance < offer.amount:
-                    raise ValueError("Insufficient funds in wallet")
-                
-                # Debit Wallet
-                buyer_wallet.balance -= offer.amount
-                buyer_wallet.save()
-                
-                # Create Transaction Record
-                converted = get_converted_amounts(offer.amount, buyer_wallet.currency)
-                Transaction.objects.create(
-                    wallet=buyer_wallet,
-                    title=f"Escrow Lock: {agreement.title}",
-                    amount=converted.get('amount_ngn') or offer.amount,
-                    amount_usd=converted.get('amount_usd'),
-                    amount_ngn=converted.get('amount_ngn'),
-                    transaction_type='TRANSFER',
-                    category='Escrow Lock',
-                    status='SUCCESSFUL',
-                    reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                    description=f"Funds locked for agreement {agreement.id}"
-                )
-                
-                # Update Agreement
-                agreement.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
-                agreement.amount_usd = converted.get('amount_usd') or offer.amount_usd
-                agreement.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
-                agreement.timeline = offer.timeline
-                agreement.status = 'active'
-                agreement.secured_at = timezone.now()
-                agreement.active_offer = offer
-                agreement.save()
-                
-                # Update Offer
-                offer.status = 'accepted'
-                offer.save()
+                with transaction.atomic(using='wallet_db'):
+                    try:
+                        # Lock rows to prevent race conditions
+                        buyer_wallet = Wallet.objects.select_for_update().get(user_id=user.id)
+                    except Wallet.DoesNotExist:
+                        raise ValueError("Buyer wallet not found")
+
+                    if buyer_wallet.balance < offer.amount:
+                        raise ValueError("Insufficient funds in wallet")
+                    
+                    # Debit Wallet
+                    buyer_wallet.balance -= offer.amount
+                    buyer_wallet.save()
+                    
+                    # Create Transaction Record
+                    converted = get_converted_amounts(offer.amount, buyer_wallet.currency)
+                    Transaction.objects.create(
+                        wallet=buyer_wallet,
+                        title=f"Escrow Lock: {agreement.title}",
+                        amount=converted.get('amount_ngn') or offer.amount,
+                        amount_usd=converted.get('amount_usd'),
+                        amount_ngn=converted.get('amount_ngn'),
+                        transaction_type='TRANSFER',
+                        category='Escrow Lock',
+                        status='SUCCESSFUL',
+                        reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
+                        description=f"Funds locked for agreement {agreement.id}"
+                    )
+                    
+                    # Update Agreement (using locked instance)
+                    agreement_locked.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
+                    agreement_locked.amount_usd = converted.get('amount_usd') or offer.amount_usd
+                    agreement_locked.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
+                    agreement_locked.timeline = offer.timeline
+                    agreement_locked.status = 'active'
+                    agreement_locked.secured_at = timezone.now()
+                    agreement_locked.active_offer = offer
+                    agreement_locked.save()
+                    
+                    # Update Offer
+                    offer.status = 'accepted'
+                    offer.save()
+                    
+                    # Return updated objects
+                    return agreement_locked, offer
                 
         elif is_seller:
             offer.status = 'accepted_by_seller'

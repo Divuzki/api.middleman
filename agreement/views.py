@@ -69,20 +69,10 @@ class AgreementViewSet(viewsets.ModelViewSet):
         agreement = self.get_object()
         user = request.user
 
-        if agreement.initiator == user:
-            raise ValidationError("Initiator cannot join their own agreement")
-        
-        if agreement.counterparty and agreement.counterparty != user:
-            raise ValidationError("Agreement already has a counterparty")
-
-        agreement.counterparty = user
-        if agreement.creator_role == 'buyer':
-            agreement.seller = user
-        else:
-            agreement.buyer = user
-            
-        agreement.status = 'awaiting_acceptance'
-        agreement.save()
+        try:
+            agreement = AgreementService.join_agreement(user, agreement)
+        except ValueError as e:
+            raise ValidationError(str(e))
         
         self._notify_agreement_update(agreement)
         

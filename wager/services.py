@@ -304,6 +304,7 @@ class WagerService:
         if user.transaction_pin and not user.verify_pin(pin):
             raise ValueError("Incorrect PIN")
         
+        # Initial check (optimization), real check is inside the lock
         if wager.status != 'OPEN':
             raise ValueError("This wager is no longer open")
         
@@ -334,9 +335,19 @@ class WagerService:
 
         try:
             with transaction.atomic(using='wager_db'):
+                # Lock the wager row to prevent race conditions
+                wager_locked = Wager.objects.select_for_update().get(id=wager.id)
+                
+                if wager_locked.status != 'OPEN':
+                    raise ValueError("This wager is no longer open")
+                
+                wager_locked.opponent = user
+                wager_locked.status = 'MATCHED'
+                wager_locked.save()
+                
+                # Update the passed object
                 wager.opponent = user
                 wager.status = 'MATCHED'
-                wager.save()
                 return wager
         except Exception:
             with transaction.atomic(using='wallet_db'):
