@@ -42,9 +42,9 @@ class DepositFlowTests(APITestCase):
         mock_pay.return_value = {
             'status': 'success',
             'data': {
-                'bankName': 'Test Bank',
-                'accountNumber': '1234567890',
-                'accountName': 'Test Account'
+                'bank_name': 'Test Bank',
+                'account_number': '1234567890',
+                'account_name': 'Test Account'
             }
         }
 

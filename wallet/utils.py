@@ -161,7 +161,7 @@ class TransactPayClient:
         request_payload = {"data": encrypted_data}
 
         try:
-            response = requests.post(url, json=request_payload, headers=self.headers, timeout=10)
+            response = requests.post(url, json=request_payload, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -193,7 +193,7 @@ class TransactPayClient:
         request_payload = {"data": encrypted_data}
         
         try:
-            response = requests.post(url, json=request_payload, headers=self.headers, timeout=10)
+            response = requests.post(url, json=request_payload, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -221,7 +221,7 @@ class TransactPayClient:
         request_payload = {"data": encrypted_data}
         
         try:
-            response = requests.post(url, json=request_payload, headers=self.headers, timeout=10)
+            response = requests.post(url, json=request_payload, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -248,7 +248,7 @@ class TransactPayClient:
         """
         url = f"{self.base_url}/order/status/{reference}"
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -261,7 +261,7 @@ class TransactPayClient:
         """
         url = f"{self.base_url}/banks"
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -278,7 +278,7 @@ class TransactPayClient:
             "account_number": account_number
         }
         try:
-            response = requests.post(url, json=payload, headers=self.headers, timeout=10)
+            response = requests.post(url, json=payload, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:

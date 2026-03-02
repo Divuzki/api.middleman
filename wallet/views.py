@@ -118,30 +118,13 @@ class DepositView(APIView):
                     if order_response and order_response.get('status') == 'success':
                             # 2. Pay Order with Bank Transfer
                             pay_response = client.pay_order(ref, payment_option='bank-transfer')
+                            logger.info(f"TransactPay pay_order response: {pay_response}")
                             
                             if pay_response and pay_response.get('status') == 'success':
                                 data = pay_response.get('data', {})
                                 
                                 # Helper to get nested or flat data
-                                sources = [
-                                    data.get("BankTransfer") or {},
-                                    data.get("payment") or {},
-                                    data
-                                ]
-
-                                def get_from_sources(keys):
-                                    for source in sources:
-                                        if not isinstance(source, dict): continue
-                                        for key in keys:
-                                            val = source.get(key)
-                                            if val:
-                                                return val
-                                    return None
-
-                                account_number = get_from_sources(['accountNumber', 'account_number'])
-                                account_name = get_from_sources(['accountName', 'account_name'])
-                                bank_name = get_from_sources(['bankName', 'bank_name', 'bankProviderName'])
-
+                                bank_data = data.get("BankTransfer") or data
                                 payment_data = data.get("payment") or data
                                 order_data = data.get("order") or data
 
@@ -149,14 +132,14 @@ class DepositView(APIView):
                                 payment_details = {
                                     "paymentDetail": {
                                         "redirectUrl": payment_data.get("RedirectUrl"),
-                                        "recipientAccount": account_number,
+                                        "recipientAccount": bank_data.get("account_number") or bank_data.get("accountNumber"),
                                         "paymentReference": order_data.get("reference"),
                                         "cardToken": None 
                                     },
                                     "bankTransferDetails": {
-                                        "bankAccount": account_number,
-                                        "accountName": account_name,
-                                        "bankName": bank_name
+                                        "bankAccount": bank_data.get("account_number") or bank_data.get("accountNumber"),
+                                        "accountName": bank_data.get("account_name") or bank_data.get("accountName"),
+                                        "bankName": bank_data.get("bank_name") or bank_data.get("bankName")
                                     },
                                     "orderPayment": {
                                         "orderId": order_data.get("orderId"), 
@@ -303,7 +286,7 @@ class TransactionListView(ListAPIView):
     def get_queryset(self):
         user_id = self.request.user.id
         wallet, _ = Wallet.objects.get_or_create(user_id=user_id)
-        queryset = Transaction.objects.filter(wallet=wallet).exclude(status='PENDING')
+        queryset = Transaction.objects.filter(wallet=wallet)
 
         # Filter by month and year if provided
         month = self.request.query_params.get('month')
@@ -326,56 +309,52 @@ class VerifyDepositView(GenericAPIView):
     def get(self, request, reference):
         user_id = request.user.id
         
-        try:
-            with transaction.atomic():
-                # Use select_for_update to lock the row
-                tx = Transaction.objects.select_for_update().get(
-                    reference=reference, 
-                    wallet__user_id=user_id
-                )
-                wallet = tx.wallet
+        # Ensure wallet exists and get transaction
+        wallet = get_object_or_404(Wallet, user_id=user_id)
+        tx = get_object_or_404(Transaction, reference=reference, wallet=wallet)
 
-                # If already successful, return idempotently
-                if tx.status == 'SUCCESSFUL':
-                    return self.get_success_response(tx, wallet)
+        # If already successful, return idempotently
+        if tx.status == 'SUCCESSFUL':
+            return self.get_success_response(tx, wallet)
 
-                # Verification Logic
-                success = False
-                
-                if tx.payment_method == 'TRANSACTPAY':
-                    client = TransactPayClient()
-                    data = client.verify_payment(reference)
-                    if data and data.get('status') and data.get('data', {}).get('status') == 'success':
-                        success = True
-                
-                elif tx.payment_method == 'NOWPAYMENTS':
-                    client = NOWPaymentsClient()
-                    # We check by reference (order_id)
-                    data = client.get_payment_status_by_order_id(reference)
-                    if data:
-                        status_val = data.get('payment_status')
-                        # NOWPayments statuses: finished, confirmed, sending, waiting, etc.
-                        if status_val in ['finished', 'confirmed', 'sending']:
-                            success = True
-                
-                if success:
-                    # Update transaction status
-                    tx.status = 'SUCCESSFUL'
-                    tx.save()
-                        
-                    # Notify user
-                    notify_balance_update(request.user)
-                    return self.get_success_response(tx, wallet)
+        # Verification Logic
+        success = False
+        
+        if tx.payment_method == 'TRANSACTPAY':
+            client = TransactPayClient()
+            data = client.verify_payment(reference)
+            if data and data.get('status') and data.get('data', {}).get('status') == 'success':
+                 success = True
+        
+        elif tx.payment_method == 'NOWPAYMENTS':
+             client = NOWPaymentsClient()
+             # We check by reference (order_id)
+             data = client.get_payment_status_by_order_id(reference)
+             if data:
+                 status_val = data.get('payment_status')
+                 # NOWPayments statuses: finished, confirmed, sending, waiting, etc.
+                 if status_val in ['finished', 'confirmed', 'sending']:
+                     success = True
+        
+        else:
+            # Fallback for manual or legacy? 
+            # Or if payment_method is null (user didn't select yet but tries to verify?)
+            pass
 
-        except Transaction.DoesNotExist:
-            return StandardResponse(
-                status=status.HTTP_404_NOT_FOUND,
-                code="not_found",
-                message="Transaction not found"
-            )
-        except Exception as e:
-            logger.error(f"Verification error: {e}")
-            raise APIException("Transaction verification failed")
+        if success:
+             # Atomic update for balance and transaction status
+             try:
+                # Update transaction status (Signal handles balance)
+                tx.status = 'SUCCESSFUL'
+                tx.save()
+                    
+                # Notify user
+                notify_balance_update(request.user)
+                return self.get_success_response(tx, wallet)
+                
+             except Exception as e:
+                logger.error(f"Verification DB error: {e}")
+                raise APIException("Transaction verification failed")
 
         return StandardResponse(
             status=status.HTTP_200_OK,
@@ -397,49 +376,35 @@ class TransactPayWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # Log headers
-        logger.debug(f"TransactPay Webhook Headers: {request.headers}")
-        
         data = request.data
         # Assuming TransactPay sends reference in payload
         reference = data.get('reference') or data.get('data', {}).get('reference')
         if not reference:
             return StandardResponse(status=status.HTTP_400_BAD_REQUEST, code="error", message="Missing reference")
-            
         try:
-            with transaction.atomic():
-                tx = Transaction.objects.select_for_update().get(reference=reference)
-                
-                if tx.status == 'SUCCESSFUL':
-                    return StandardResponse(message="Transaction already successful")
-                
-                client = TransactPayClient()
-                try:
-                    verification = client.verify_payment(reference)
-                except Exception as e:
-                    logger.error(f"TransactPay verification error: {e}")
-                    verification = None
-
-                success = False
-                if verification and verification.get('status') and verification.get('data', {}).get('status') == 'success':
-                    success = True
-                
-                if success:
-                    tx.status = 'SUCCESSFUL'
-                    tx.save()
-                    
-                    # Notify user
-                    wallet = tx.wallet
-                    user = User.objects.get(id=wallet.user_id)
-                    notify_balance_update(user)
-
+            tx = Transaction.objects.get(reference=reference)
         except Transaction.DoesNotExist:
             logger.warning(f"TransactPay Webhook: Transaction not found for reference {reference}")
             return StandardResponse(message="Transaction not found")
-        except Exception as e:
-            logger.error(f"TransactPay Webhook error: {e}")
-            return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error processing webhook")
+        if tx.status == 'SUCCESSFUL':
+            return StandardResponse(message="Transaction already successful")
         
+        client = TransactPayClient()
+        verification = client.verify_payment(reference)
+        success = False
+        if verification and verification.get('status') and verification.get('data', {}).get('status') == 'success':
+            success = True
+        if success:
+            try:
+                tx.status = 'SUCCESSFUL'
+                tx.save()
+                
+                # Notify user
+                wallet = Wallet.objects.get(id=tx.wallet_id)
+                user = User.objects.get(id=wallet.user_id)
+                notify_balance_update(user)
+            except Exception:
+                return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error updating transaction")
         return StandardResponse(message="Webhook processed")
 
 class NOWPaymentsWebhookView(APIView):
@@ -458,31 +423,24 @@ class NOWPaymentsWebhookView(APIView):
         pay_currency = data.get('pay_currency')
         if not order_id:
             return StandardResponse(status=status.HTTP_400_BAD_REQUEST, code="error", message="Missing order_id")
-            
         try:
-            with transaction.atomic():
-                tx = Transaction.objects.select_for_update().get(reference=order_id)
-                
-                if tx.status == 'SUCCESSFUL':
-                    return StandardResponse(message="Transaction already successful")
-                    
-                if tx.payment_currency and pay_currency and tx.payment_currency.lower() != pay_currency.lower():
-                    return StandardResponse(message="Currency mismatch, pending")
-                    
-                if payment_status in ['finished', 'confirmed', 'sending']:
-                    tx.status = 'SUCCESSFUL'
-                    tx.save()
-                    
-                    # Notify user
-                    wallet = tx.wallet
-                    user = User.objects.get(id=wallet.user_id)
-                    notify_balance_update(user)
-                    
+            tx = Transaction.objects.get(reference=order_id)
         except Transaction.DoesNotExist:
             logger.warning(f"NOWPayments Webhook: Transaction not found for order_id {order_id}")
             return StandardResponse(message="Transaction not found")
-        except Exception as e:
-            logger.error(f"NOWPayments Webhook error: {e}")
-            return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error processing webhook")
-            
+        if tx.status == 'SUCCESSFUL':
+            return StandardResponse(message="Transaction already successful")
+        if tx.payment_currency and pay_currency and tx.payment_currency.lower() != pay_currency.lower():
+            return StandardResponse(message="Currency mismatch, pending")
+        if payment_status in ['finished', 'confirmed', 'sending']:
+            try:
+                tx.status = 'SUCCESSFUL'
+                tx.save()
+                
+                # Notify user
+                wallet = Wallet.objects.get(id=tx.wallet_id)
+                user = User.objects.get(id=wallet.user_id)
+                notify_balance_update(user)
+            except Exception:
+                return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error updating transaction")
         return StandardResponse(message="Webhook processed")
