@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from wallet.utils import TransactPayClient, NOWPaymentsClient
+from wallet.utils import PaystackClient, NOWPaymentsClient
 import logging
 
 logger = logging.getLogger(__name__)
@@ -8,16 +8,16 @@ class Command(BaseCommand):
     help = 'Verify connectivity to payment gateways'
 
     def handle(self, *args, **kwargs):
-        self.stdout.write("Checking TransactPay connectivity...")
+        self.stdout.write("Checking Paystack connectivity...")
         try:
-            tp = TransactPayClient()
+            tp = PaystackClient()
             banks = tp.get_banks()
-            if banks and banks.get('status') == 'success':
-                self.stdout.write(self.style.SUCCESS(f"TransactPay Connected. Banks count: {len(banks.get('data', []))}"))
+            if banks and banks.get('status'):
+                self.stdout.write(self.style.SUCCESS(f"Paystack Connected. Banks count: {len(banks.get('data', []))}"))
             else:
-                self.stdout.write(self.style.ERROR(f"TransactPay Failed: {banks}"))
+                self.stdout.write(self.style.ERROR(f"Paystack Failed: {banks}"))
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"TransactPay Error: {str(e)}"))
+            self.stdout.write(self.style.ERROR(f"Paystack Error: {str(e)}"))
 
         self.stdout.write("\nChecking NOWPayments connectivity...")
         try:

@@ -53,6 +53,12 @@ class User(AbstractUser):
 
     has_set_account_pin = models.BooleanField(default=False)
     transaction_pin = models.CharField(max_length=128, blank=True, null=True)
+    
+    # Paystack Dedicated Virtual Account
+    paystack_customer_code = models.CharField(max_length=100, blank=True, null=True)
+    virtual_account_number = models.CharField(max_length=20, blank=True, null=True)
+    virtual_account_name = models.CharField(max_length=255, blank=True, null=True)
+    virtual_bank_name = models.CharField(max_length=255, blank=True, null=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []

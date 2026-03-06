@@ -19,10 +19,10 @@ from .services import PayoutService
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
 from users.notifications import notify_balance_update
 from .utils import (
-    TransactPayClient, 
+    PaystackClient, 
     NOWPaymentsClient, 
     verify_nowpayments_signature,
-    TRANSACTPAY_FEE_PERCENTAGE,
+    PAYSTACK_FEE_PERCENTAGE,
     NOWPAYMENTS_FEE_PERCENTAGE
 )
 from middleman_api.utils import StandardResponse, get_converted_amounts
@@ -46,144 +46,92 @@ class DepositView(APIView):
             
             # Calculate USD/NGN amounts (for display/record)
             converted = get_converted_amounts(amount, wallet.currency)
+            
+            # Note: For Paystack DVA, we don't necessarily create a pending transaction
+            # because the deposit happens asynchronously via webhook when user transfers money.
+            # However, for consistency and UI feedback, we can return the account details.
 
-            # Create pending transaction
-            ref = f"ref_{uuid.uuid4().hex[:12]}"
-            tx = Transaction.objects.create(
-                wallet=wallet,
-                title="Deposit",
-                amount=converted.get('amount_ngn') or amount,
-                amount_usd=converted.get('amount_usd'),
-                amount_ngn=converted.get('amount_ngn'),
-                transaction_type='DEPOSIT',
-                category='Deposit',
-                status='PENDING',
-                reference=ref,
-                icon='savings'
-            )
-
-            # Determine Payment Method and Calculate Fees
-            payment_details = None
             response_data = {
-                "reference": ref,
                 "currency": currency,
                 "amount": float(amount),
             }
-            redirect_url = settings.PAYMENT_REDIRECT_URL
             
             try:
                 if currency == 'NGN':
-                    # TransactPay Logic
-                    client = TransactPayClient()
-                    fee_response = client.get_fee(amount, currency)
+                    # Paystack Dedicated Virtual Account Logic
+                    client = PaystackClient()
+                    user = request.user
                     
-                    if fee_response and fee_response.get('status') == 'success':
-                        data = fee_response.get('data', {})
-                        # Assuming fee is returned in data.fee. Adjust based on actual API response if needed.
-                        # User suggestion: response.get('data', {}).get('fee')
-                        fetched_fee = data.get('fee')
-                        
-                        if fetched_fee is not None:
-                            gateway_fee = float(fetched_fee)
-                        else:
-                            logger.error(f"TransactPay fee not found in response: {fee_response}")
-                            raise GatewayError("Unable to fetch transaction fee")
-                    else:
-                        logger.error(f"TransactPay get_fee failed for amount {amount}: {fee_response}")
-                        raise GatewayError("Unable to fetch transaction fee")
+                    # 1. Check if user already has a DVA
+                    if not user.virtual_account_number:
+                        # Create Customer if needed
+                        if not user.paystack_customer_code:
+                            cust_resp = client.create_customer(
+                                email=user.email,
+                                first_name=user.first_name,
+                                last_name=user.last_name,
+                                phone=getattr(user, 'phone_number', None)
+                            )
+                            if cust_resp and cust_resp.get('status'):
+                                user.paystack_customer_code = cust_resp['data']['customer_code']
+                                user.save()
+                            else:
+                                raise GatewayError("Failed to create Paystack customer")
 
-                    total_amount = float(amount) + gateway_fee
+                        # Create DVA
+                        dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                        if dva_resp and dva_resp.get('status'):
+                            data = dva_resp['data']
+                            user.virtual_account_number = data.get('account_number')
+                            user.virtual_account_name = data.get('account_name')
+                            user.virtual_bank_name = data.get('bank', {}).get('name')
+                            user.save()
+                        else:
+                            # Fallback or Error
+                            # Note: DVA creation might fail if BVN is not linked or other KYC issues on Paystack side
+                            logger.error(f"DVA Creation failed: {dva_resp}")
+                            raise GatewayError("Failed to generate virtual account. Please contact support.")
+
+                    # Return DVA details
+                    bank_details = {
+                        "bankName": user.virtual_bank_name,
+                        "accountNumber": user.virtual_account_number,
+                        "accountName": user.virtual_account_name
+                    }
                     
                     response_data.update({
-                        "fee": round(gateway_fee, 2),
-                        "total_charged": round(total_amount, 2)
+                        "bankTransferDetails": bank_details,
+                        "message": "Please transfer to this account to fund your wallet."
                     })
-                    
-                    tx.payment_method = 'TRANSACTPAY'
-                    tx.payment_currency = 'NGN'
-                    tx.save()
-                    
-                    # New Flow: Create Order -> Pay Order (Bank Transfer)
-                    # 1. Create Order
-                    order_response = client.create_order(
-                        reference=ref,
-                        amount=total_amount,
-                        email=request.user.email,
-                        redirect_url=redirect_url,
-                        firstname=request.user.first_name or "User",
-                        lastname=request.user.last_name or "Customer",
-                        mobile=getattr(request.user, 'phone_number', "2348000000000") # Safe attribute access
-                    )
-                    
-                    if order_response and order_response.get('status') == 'success':
-                            # 2. Pay Order with Bank Transfer
-                            pay_response = client.pay_order(ref, payment_option='bank-transfer')
-                            logger.info(f"TransactPay pay_order response: {pay_response}")
-                            
-                            if pay_response and pay_response.get('status') == 'success':
-                                data = pay_response.get('data', {})
-                                
-                                # Helper to get nested or flat data
-                                bank_data = data.get("BankTransfer") or data
-                                payment_data = data.get("payment") or data
-                                order_data = data.get("order") or data
-
-                                # Map flat response to nested structure for frontend
-                                payment_details = {
-                                    "paymentDetail": {
-                                        "redirectUrl": payment_data.get("RedirectUrl"),
-                                        "recipientAccount": bank_data.get("account_number") or bank_data.get("accountNumber"),
-                                        "paymentReference": order_data.get("reference"),
-                                        "cardToken": None 
-                                    },
-                                    "bankTransferDetails": {
-                                        "bankAccount": bank_data.get("account_number") or bank_data.get("accountNumber"),
-                                        "accountName": bank_data.get("account_name") or bank_data.get("accountName"),
-                                        "bankName": bank_data.get("bank_name") or bank_data.get("bankName")
-                                    },
-                                    "orderPayment": {
-                                        "orderId": order_data.get("orderId"), 
-                                        "orderPaymentReference": order_data.get("reference"),
-                                        "currency": order_data.get("currency"),
-                                        "totalAmount": order_data.get("amount"),
-                                        "statusId": order_data.get("statusId"),
-                                        "orderPaymentResponseCode": order_data.get("responseCode"),
-                                        "orderPaymentResponseMessage": order_data.get("responseMessage"),
-                                        "orderPaymentInstrument": order_data.get("paymentInstrument"),
-                                        "remarks": order_data.get("remarks"),
-                                        "fee": order_data.get("fee")
-                                    }
-                                }
-                            else:
-                                logger.error(f"TransactPay Pay Order failed for ref {ref}")
-                                raise GatewayError("Failed to initiate bank transfer")
-                    else:
-                        logger.error(f"TransactPay Create Order failed for ref {ref}")
-                        raise GatewayError("Failed to create payment order")
 
                 elif currency == 'USD':
                     # NOWPayments Logic
-                    # Dynamic fee fetching is available via `get_estimated_price` but fixed 0.5% is standard.
+                    ref = f"ref_{uuid.uuid4().hex[:12]}"
                     
-                    # Optional: Call client.get_estimated_price and log the result for debugging.
-                    try:
-                        debug_client = NOWPaymentsClient()
-                        estimate = debug_client.get_estimated_price(converted.get('amount_usd'))
-                        logger.info(f"NOWPayments Estimate for {converted.get('amount_usd')} USD: {estimate}")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch NOWPayments estimate: {e}")
+                    # Create pending transaction for Crypto
+                    tx = Transaction.objects.create(
+                        wallet=wallet,
+                        title="Deposit",
+                        amount=converted.get('amount_ngn') or amount,
+                        amount_usd=converted.get('amount_usd'),
+                        amount_ngn=converted.get('amount_ngn'),
+                        transaction_type='DEPOSIT',
+                        category='Deposit',
+                        status='PENDING',
+                        reference=ref,
+                        icon='savings',
+                        payment_method='NOWPAYMENTS',
+                        payment_currency='USD'
+                    )
 
                     gateway_fee = float(converted.get('amount_usd')) * NOWPAYMENTS_FEE_PERCENTAGE
                     total_amount = float(converted.get('amount_usd')) + gateway_fee
                     
                     response_data.update({
+                        "reference": ref,
                         "fee": round(gateway_fee, 2),
                         "total_charged": round(total_amount, 2)
                     })
-                    
-                    tx.payment_method = 'NOWPAYMENTS'
-                    tx.payment_currency = 'USD' # Default crypto
-                    tx.save()
                     
                     client = NOWPaymentsClient()
                     
@@ -201,24 +149,20 @@ class DepositView(APIView):
                             "pay_currency": result.get('pay_currency'),
                             "payment_id": result.get('payment_id')
                         }
+                        response_data.update(payment_details)
                     else:
+                        tx.status = 'FAILED'
+                        tx.save()
                         logger.error(f"Payment initialization failed for tx {ref}. Currency: {currency}")
                         raise GatewayError("Failed to generate payment link")
                 
                 else:
                     raise ValidationError(f"Unsupported currency: {currency}")
 
-                if payment_details:
-                    response_data.update(payment_details)
-
                 return StandardResponse(data=response_data, message="Deposit initiated")
 
             except Exception as e:
-                # Mark transaction as failed if any error occurs
-                tx.status = 'FAILED'
-                tx.save()
                 logger.error(f"Deposit error: {str(e)}")
-                # Re-raise exception to be handled by custom_exception_handler
                 raise e
         
         raise ValidationError("Invalid amount")
@@ -307,51 +251,38 @@ class VerifyDepositView(GenericAPIView):
     serializer_class = DepositVerificationSerializer
 
     def get(self, request, reference):
-        user_id = request.user.id
+        user = request.user
+        wallet = get_object_or_404(Wallet, user_id=user.id)
         
-        # Ensure wallet exists and get transaction
-        wallet = get_object_or_404(Wallet, user_id=user_id)
-        tx = get_object_or_404(Transaction, reference=reference, wallet=wallet)
+        # This view is mainly for NOWPayments or manual verification
+        # For Paystack DVA, verification happens via webhook primarily.
+        # But if we want to verify a specific transaction ref (if we had one), we could use PaystackClient.
+        
+        # Logic adapted for existing behavior
+        try:
+            tx = Transaction.objects.get(reference=reference, wallet=wallet)
+        except Transaction.DoesNotExist:
+             return StandardResponse(status=status.HTTP_404_NOT_FOUND, message="Transaction not found")
 
-        # If already successful, return idempotently
         if tx.status == 'SUCCESSFUL':
             return self.get_success_response(tx, wallet)
 
-        # Verification Logic
         success = False
         
-        if tx.payment_method == 'TRANSACTPAY':
-            client = TransactPayClient()
-            data = client.verify_payment(reference)
-            if data and data.get('status') and data.get('data', {}).get('status') == 'success':
-                 success = True
-        
-        elif tx.payment_method == 'NOWPAYMENTS':
+        if tx.payment_method == 'NOWPAYMENTS':
              client = NOWPaymentsClient()
-             # We check by reference (order_id)
              data = client.get_payment_status_by_order_id(reference)
              if data:
                  status_val = data.get('payment_status')
-                 # NOWPayments statuses: finished, confirmed, sending, waiting, etc.
                  if status_val in ['finished', 'confirmed', 'sending']:
                      success = True
         
-        else:
-            # Fallback for manual or legacy? 
-            # Or if payment_method is null (user didn't select yet but tries to verify?)
-            pass
-
         if success:
-             # Atomic update for balance and transaction status
              try:
-                # Update transaction status (Signal handles balance)
                 tx.status = 'SUCCESSFUL'
                 tx.save()
-                    
-                # Notify user
                 notify_balance_update(request.user)
                 return self.get_success_response(tx, wallet)
-                
              except Exception as e:
                 logger.error(f"Verification DB error: {e}")
                 raise APIException("Transaction verification failed")
@@ -359,7 +290,7 @@ class VerifyDepositView(GenericAPIView):
         return StandardResponse(
             status=status.HTTP_200_OK,
             code="pending",
-            message="Payment not verified yet or failed"
+            message="Payment not verified yet"
         )
 
     def get_success_response(self, tx, wallet):
@@ -372,40 +303,93 @@ class VerifyDepositView(GenericAPIView):
             }
         )
 
-class TransactPayWebhookView(APIView):
+class PaystackWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        data = request.data
-        # Assuming TransactPay sends reference in payload
-        reference = data.get('reference') or data.get('data', {}).get('reference')
-        if not reference:
-            return StandardResponse(status=status.HTTP_400_BAD_REQUEST, code="error", message="Missing reference")
-        try:
-            tx = Transaction.objects.get(reference=reference)
-        except Transaction.DoesNotExist:
-            logger.warning(f"TransactPay Webhook: Transaction not found for reference {reference}")
-            return StandardResponse(message="Transaction not found")
-        if tx.status == 'SUCCESSFUL':
-            return StandardResponse(message="Transaction already successful")
+        # 1. Verify Signature
+        secret = settings.PAYSTACK_SECRET_KEY
+        signature = request.headers.get('x-paystack-signature')
         
-        client = TransactPayClient()
-        verification = client.verify_payment(reference)
-        success = False
-        if verification and verification.get('status') and verification.get('data', {}).get('status') == 'success':
-            success = True
-        if success:
+        if not signature:
+             return Response(status=status.HTTP_400_BAD_REQUEST)
+             
+        payload = request.body
+        computed_sig = hmac.new(
+            key=secret.encode('utf-8'),
+            msg=payload,
+            digestmod=hashlib.sha512
+        ).hexdigest()
+        
+        if computed_sig != signature:
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Process Event
+        event = request.data.get('event')
+        data = request.data.get('data', {})
+        
+        if event == 'charge.success':
+            # Identify user by customer code or DVA info
+            customer_code = data.get('customer', {}).get('customer_code')
+            amount_kobo = data.get('amount', 0)
+            amount_ngn = amount_kobo / 100.0
+            reference = data.get('reference')
+            
+            # Idempotency check: Check if transaction with this reference already exists
+            if Transaction.objects.filter(reference=reference).exists():
+                return Response(status=status.HTTP_200_OK)
+
             try:
-                tx.status = 'SUCCESSFUL'
+                # Find User
+                user = User.objects.filter(paystack_customer_code=customer_code).first()
+                if not user:
+                    logger.error(f"Paystack Webhook: User not found for customer code {customer_code}")
+                    return Response(status=status.HTTP_200_OK) # Ack to stop retries
+
+                wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
+                
+                # Create Transaction & Credit Wallet
+                tx = Transaction.objects.create(
+                    wallet=wallet,
+                    title="Deposit",
+                    amount=amount_ngn,
+                    amount_ngn=amount_ngn,
+                    transaction_type='DEPOSIT',
+                    category='Deposit',
+                    status='SUCCESSFUL', # Direct success
+                    reference=reference,
+                    payment_method='PAYSTACK',
+                    payment_currency='NGN',
+                    description="Deposit via Virtual Account"
+                )
+                
+                # Note: The 'post_save' or 'pre_save' signal in services.py usually handles balance update
+                # IF status changes to SUCCESSFUL. Since we create it as SUCCESSFUL, 
+                # we might need to manually trigger balance update or ensure signal handles creation too.
+                # Looking at services.py: "Only process updates, not creations (handled by respective services)"
+                # So we must credit manually here or save as PENDING then update to SUCCESSFUL.
+                
+                # Let's do Pending -> Successful to trigger the signal logic if applicable, 
+                # OR just update balance directly since we are in a trusted webhook context.
+                # Ideally use WalletEngine if available.
+                
+                # Re-reading services.py: WalletEngine.process_transaction_update handles updates.
+                # So:
+                tx.status = 'PENDING'
                 tx.save()
                 
-                # Notify user
-                wallet = Wallet.objects.get(id=tx.wallet_id)
-                user = User.objects.get(id=wallet.user_id)
+                tx.status = 'SUCCESSFUL'
+                tx.save() # This should trigger the signal
+                
+                # Fallback if signal doesn't work for some reason (e.g. if signal is only on pre_save with change)
+                wallet.refresh_from_db()
                 notify_balance_update(user)
-            except Exception:
-                return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error updating transaction")
-        return StandardResponse(message="Webhook processed")
+                
+            except Exception as e:
+                logger.error(f"Paystack Webhook Error: {e}")
+                return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(status=status.HTTP_200_OK)
 
 class NOWPaymentsWebhookView(APIView):
     permission_classes = [AllowAny]

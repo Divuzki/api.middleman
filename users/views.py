@@ -20,7 +20,7 @@ from .notifications import send_device_logout_notification
 import requests
 import random
 import uuid
-from wallet.utils import TransactPayClient
+from wallet.utils import PaystackClient
 from django.conf import settings
 from django.core.cache import cache
 
@@ -106,9 +106,9 @@ class BankListView(APIView):
                 { "code": "033", "name": "United Bank for Africa" }
             ]
 
-            # get list of banks from transactpay api
+            # get list of banks from paystack api
             try:
-                client = TransactPayClient()
+                client = PaystackClient()
                 response_data = client.get_banks()
                 
                 if response_data and response_data.get("status"):
@@ -180,8 +180,8 @@ class VerifyBankAccountView(GenericAPIView):
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
-            # Call TransactPay API to verify bank account
-            client = TransactPayClient()
+            # Call Paystack API to verify bank account
+            client = PaystackClient()
             response_data = client.resolve_account_number(
                 bank_code=serializer.validated_data['bankCode'],
                 account_number=serializer.validated_data['accountNumber']
