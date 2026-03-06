@@ -425,6 +425,7 @@ if not CORS_ALLOW_ALL_ORIGINS:
             "capacitor://localhost",
             "http://localhost",
             "http://localhost:8100",
+            "http://localhost:5173",
         ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -432,6 +433,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://localhost",
     "http://localhost",
     "http://localhost:8100",
+    "http://localhost:5173",
     "capacitor://localhost",
     "midman://",
     "https://midman.app"
