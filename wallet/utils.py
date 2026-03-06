@@ -53,6 +53,17 @@ class PaystackClient:
         }
         return self._request('POST', '/customer', payload)
 
+    def update_customer(self, customer_code, first_name=None, last_name=None, phone=None):
+        """
+        Update a customer on Paystack.
+        """
+        payload = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "phone": phone
+        }
+        return self._request('PUT', f'/customer/{customer_code}', payload)
+
     def create_dedicated_account(self, customer_code, preferred_bank="wema-bank"):
         """
         Create a dedicated virtual account for an existing customer.

@@ -64,22 +64,47 @@ class DepositView(APIView):
                     
                     # 1. Check if user already has a DVA
                     if not user.virtual_account_number:
+                        phone = getattr(user, 'phone_number', None)
+                        if not phone:
+                            # Try to get phone from request if user model doesn't have it
+                            # Note: This requires the frontend to send 'phone' if it's missing on profile
+                            phone = request.data.get('phone')
+                        
                         # Create Customer if needed
                         if not user.paystack_customer_code:
                             cust_resp = client.create_customer(
                                 email=user.email,
                                 first_name=user.first_name,
                                 last_name=user.last_name,
-                                phone=getattr(user, 'phone_number', None)
+                                phone=phone
                             )
                             if cust_resp and cust_resp.get('status'):
                                 user.paystack_customer_code = cust_resp['data']['customer_code']
                                 user.save()
                             else:
                                 raise GatewayError("Failed to create Paystack customer")
+                        
+                        # Update Customer with phone if it was missing before (Paystack requires phone for DVA)
+                        if phone:
+                            try:
+                                client.update_customer(
+                                    user.paystack_customer_code,
+                                    first_name=user.first_name,
+                                    last_name=user.last_name,
+                                    phone=phone
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to update customer phone: {e}")
 
                         # Create DVA
-                        dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                        try:
+                            dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                        except GatewayError as e:
+                            # Check if error is about missing phone
+                            if "phone number is required" in str(e):
+                                raise ValidationError("Phone number is required for bank transfer. Please update your profile or provide 'phone' in the request.")
+                            raise e
+
                         if dva_resp and dva_resp.get('status'):
                             data = dva_resp['data']
                             user.virtual_account_number = data.get('account_number')
