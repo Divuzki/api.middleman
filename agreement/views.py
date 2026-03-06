@@ -160,6 +160,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer) # Buyer needs to confirm now
         notify_badge_counts(agreement.seller)
 
+        send_agreement_notification(agreement)
+
         return StandardResponse(self.get_serializer(agreement).data)
 
     def _get_participants(self, agreement):
@@ -305,8 +307,6 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
 
-        send_agreement_notification(agreement)
-
         return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='confirm')
@@ -328,6 +328,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_balance_update(agreement.seller) # Funds released
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
+
+        send_agreement_notification(agreement)
 
         return StandardResponse(self.get_serializer(agreement).data)
 

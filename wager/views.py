@@ -197,6 +197,8 @@ class WagerViewSet(viewsets.ModelViewSet):
                 f"{request.user.first_name} requested a draw for '{wager.title}'"
             )
 
+        self._notify_wager_update(wager)
+
         return StandardResponse(data=self.get_serializer(wager).data)
 
     @action(detail=True, methods=['post'], url_path='draw/accept')
@@ -218,6 +220,8 @@ class WagerViewSet(viewsets.ModelViewSet):
                 "Draw Accepted", 
                 f"{request.user.first_name} accepted the draw for '{wager.title}'"
             )
+
+        self._notify_wager_update(wager)
 
         return StandardResponse(data=self.get_serializer(wager).data)
 
@@ -247,6 +251,8 @@ class WagerViewSet(viewsets.ModelViewSet):
                 "Draw Rejected", 
                 f"{request.user.first_name} rejected the draw for '{wager.title}'"
             )
+
+        self._notify_wager_update(wager)
 
         return StandardResponse(data=self.get_serializer(wager).data)
 
