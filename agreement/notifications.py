@@ -54,6 +54,9 @@ def send_agreement_notification(agreement, status=None):
     elif status == 'cancelled':
         title = "Agreement Cancelled"
         body = f"Agreement '{agreement.title}' has been cancelled."
+    elif status == 'offer_rejected':
+        title = "Offer Rejected"
+        body = f"An offer was rejected for agreement: {agreement.title}"
     
     # Send to each participant
     for user in participants:

@@ -12,6 +12,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from wallet.models import Wallet, Transaction
 from users.notifications import notify_balance_update, notify_badge_counts
+from .notifications import send_agreement_notification
 from .services import AgreementService
 import uuid
 
@@ -112,6 +113,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
 
+        send_agreement_notification(agreement)
+
         return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='reject-offer')
@@ -135,6 +138,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         for participant in self._get_participants(agreement):
             notify_badge_counts(participant)
         
+        send_agreement_notification(agreement, status='offer_rejected')
+
         return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='deliver')
@@ -300,6 +305,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         notify_badge_counts(agreement.buyer)
         notify_badge_counts(agreement.seller)
 
+        send_agreement_notification(agreement)
+
         return StandardResponse(self.get_serializer(agreement).data)
 
     @action(detail=True, methods=['post'], url_path='confirm')
@@ -388,6 +395,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         
         self._notify_offer_created(message)
         self._notify_agreement_update(agreement, last_message=f"Offer: {amount}")
+        
+        send_agreement_notification(agreement, status='awaiting_acceptance')
         
         for participant in self._get_participants(agreement):
             if participant != request.user:
