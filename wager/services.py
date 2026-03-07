@@ -3,7 +3,7 @@ from decimal import Decimal
 from .models import Wager, ChatMessage
 from wallet.models import Wallet, Transaction
 from .serializers import WagerSerializer
-from middleman_api.utils import get_converted_amounts
+from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
 
 class WagerService:
@@ -16,26 +16,36 @@ class WagerService:
 
         serializer = WagerSerializer(data=wager_data)
         serializer.is_valid(raise_exception=True)
-        amount = serializer.validated_data.get('amount')
-        if amount is None:
+        wager_amount = serializer.validated_data.get('amount')
+        wager_currency = serializer.validated_data.get('currency', 'NGN')
+        
+        if wager_amount is None:
             raise ValueError("Wager amount is required")
-        amount = Decimal(str(amount))
-        if amount <= 0:
+        wager_amount = Decimal(str(wager_amount))
+        if wager_amount <= 0:
             raise ValueError("Amount must be greater than zero")
+
+        wallet_amount = None
 
         with transaction.atomic(using='wallet_db'):
             wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-            # Ensure amount is Decimal for calculation
-            amount = Decimal(str(amount))
-            if wallet.balance < amount:
+            
+            # Convert wager amount to wallet currency
+            wallet_amount = convert_currency(wager_amount, wager_currency, wallet.currency)
+            if wallet_amount is None:
+                 raise ValueError(f"Currency conversion failed from {wager_currency} to {wallet.currency}")
+            
+            if wallet.balance < wallet_amount:
                 raise ValueError("Insufficient funds")
-            wallet.balance -= amount
+            
+            wallet.balance -= wallet_amount
             wallet.save()
-            converted = get_converted_amounts(amount, wallet.currency)
+            
+            converted = get_converted_amounts(wallet_amount, wallet.currency)
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Stake: {serializer.validated_data.get('title', 'Untitled')}",
-                amount=converted.get('amount_ngn') or amount,
+                amount=wallet_amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WAGER_PAYMENT',
@@ -55,13 +65,19 @@ class WagerService:
         except Exception:
             with transaction.atomic(using='wallet_db'):
                 wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-                wallet.balance += amount
+                
+                # Recalculate wallet amount if not set (though it should be set if we reached here)
+                if wallet_amount is None:
+                     wallet_amount = convert_currency(wager_amount, wager_currency, wallet.currency)
+                
+                wallet.balance += wallet_amount
                 wallet.save()
-                converted = get_converted_amounts(amount, wallet.currency)
+                
+                converted = get_converted_amounts(wallet_amount, wallet.currency)
                 Transaction.objects.create(
                     wallet=wallet,
                     title="Wager Stake Reversal",
-                    amount=converted.get('amount_ngn') or amount,
+                    amount=wallet_amount,
                     amount_usd=converted.get('amount_usd'),
                     amount_ngn=converted.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',
@@ -123,19 +139,26 @@ class WagerService:
         if str(wager.creator_id) != str(user.id):
             raise ValueError("Only the creator can cancel this wager")
 
-        amount = Decimal(wager.amount)
+        wager_amount = Decimal(wager.amount)
+        wager_currency = wager.currency
+        wallet_amount = None
 
         # 2. Refund Wallet
         with transaction.atomic(using='wallet_db'):
             wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-            wallet.balance += amount
+            
+            wallet_amount = convert_currency(wager_amount, wager_currency, wallet.currency)
+            if wallet_amount is None:
+                 raise ValueError(f"Currency conversion failed from {wager_currency} to {wallet.currency}")
+            
+            wallet.balance += wallet_amount
             wallet.save()
             
-            converted = get_converted_amounts(amount, wallet.currency)
+            converted = get_converted_amounts(wallet_amount, wallet.currency)
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Cancel Refund: {wager.title}",
-                amount=converted.get('amount_ngn') or amount,
+                amount=wallet_amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WAGER_PAYMENT',
@@ -163,14 +186,18 @@ class WagerService:
             # 4. Rollback Wallet (Compensation)
             with transaction.atomic(using='wallet_db'):
                 wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-                wallet.balance -= amount
+                
+                if wallet_amount is None:
+                     wallet_amount = convert_currency(wager_amount, wager_currency, wallet.currency)
+                
+                wallet.balance -= wallet_amount
                 wallet.save()
                 
-                converted = get_converted_amounts(amount, wallet.currency)
+                converted = get_converted_amounts(wallet_amount, wallet.currency)
                 Transaction.objects.create(
                     wallet=wallet,
                     title="Wager Cancel Reversal",
-                    amount=converted.get('amount_ngn') or amount,
+                    amount=wallet_amount,
                     amount_usd=converted.get('amount_usd'),
                     amount_ngn=converted.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',
@@ -311,19 +338,26 @@ class WagerService:
         if str(wager.creator_id) == str(user.id):
             raise ValueError("You cannot join your own wager")
             
-        amount = Decimal(wager.amount)
+        wager_amount = Decimal(wager.amount)
+        wager_currency = wager.currency
+        wallet_amount = None
 
         with transaction.atomic(using='wallet_db'):
             wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-            if wallet.balance < amount:
+            
+            wallet_amount = convert_currency(wager_amount, wager_currency, wallet.currency)
+            if wallet_amount is None:
+                 raise ValueError(f"Currency conversion failed from {wager_currency} to {wallet.currency}")
+
+            if wallet.balance < wallet_amount:
                 raise ValueError("Insufficient funds")
-            wallet.balance -= amount
+            wallet.balance -= wallet_amount
             wallet.save()
-            converted = get_converted_amounts(amount, wallet.currency)
+            converted = get_converted_amounts(wallet_amount, wallet.currency)
             Transaction.objects.create(
                 wallet=wallet,
                 title=f"Wager Join: {wager.title}",
-                amount=converted.get('amount_ngn') or amount,
+                amount=wallet_amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 transaction_type='WAGER_PAYMENT',
@@ -352,13 +386,17 @@ class WagerService:
         except Exception:
             with transaction.atomic(using='wallet_db'):
                 wallet = Wallet.objects.select_for_update().get(user_id=user.id)
-                wallet.balance += amount
+                
+                if wallet_amount is None:
+                     wallet_amount = convert_currency(wager_amount, wager_currency, wallet.currency)
+                
+                wallet.balance += wallet_amount
                 wallet.save()
-                converted = get_converted_amounts(amount, wallet.currency)
+                converted = get_converted_amounts(wallet_amount, wallet.currency)
                 Transaction.objects.create(
                     wallet=wallet,
                     title="Wager Join Reversal",
-                    amount=converted.get('amount_ngn') or amount,
+                    amount=wallet_amount,
                     amount_usd=converted.get('amount_usd'),
                     amount_ngn=converted.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',
