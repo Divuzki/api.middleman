@@ -208,7 +208,7 @@ class IdentityVerificationView(GenericAPIView):
         if serializer.is_valid():
             # Additional validation for number digits
             number = serializer.validated_data.get('number')
-            if not number.isdigit():
+            if number and not number.isdigit():
                  raise ValidationError("Invalid number format. Must be digits only.")
 
             # Update user verification status
@@ -217,10 +217,10 @@ class IdentityVerificationView(GenericAPIView):
             user.verifiedAt = timezone.now()
             
             # Save identity_id and verification_id if present
-            if 'identity_id' in serializer.validated_data:
-                user.identity_id = serializer.validated_data['identity_id']
-            if 'verification_id' in serializer.validated_data:
-                user.verification_id = serializer.validated_data['verification_id']
+            if serializer.validated_data.get('identity_id'):
+                user.identity_id = serializer.validated_data.get('identity_id')
+            if serializer.validated_data.get('verification_id'):
+                user.verification_id = serializer.validated_data.get('verification_id')
 
             user.save()
             
@@ -229,7 +229,7 @@ class IdentityVerificationView(GenericAPIView):
                 data={"verified": True}
             )
         
-        raise ValidationError("Invalid NIN/BVN number")
+        raise ValidationError(serializer.errors)
 
 class IdentityStatusView(GenericAPIView):
     permission_classes = [IsAuthenticated]

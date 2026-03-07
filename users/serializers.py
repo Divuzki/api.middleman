@@ -92,10 +92,24 @@ class BankVerificationSerializer(serializers.Serializer):
     accountNumber = serializers.CharField()
 
 class IdentityVerificationInputSerializer(serializers.Serializer):
-    type = serializers.ChoiceField(choices=['nin', 'bvn'])
-    number = serializers.CharField(min_length=11, max_length=11)
+    type = serializers.ChoiceField(choices=['nin', 'bvn'], required=False, allow_null=True)
+    number = serializers.CharField(min_length=11, max_length=11, required=False, allow_blank=True, allow_null=True)
     identityId = serializers.CharField(source='identity_id', required=False, allow_blank=True, allow_null=True)
     verificationId = serializers.CharField(source='verification_id', required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, data):
+        type_ = data.get('type')
+        number = data.get('number')
+        identity_id = data.get('identity_id')
+        verification_id = data.get('verification_id')
+
+        if (type_ and not number) or (not type_ and number):
+            raise serializers.ValidationError("Both type and number must be provided together.")
+
+        if not (type_ and number) and not identity_id and not verification_id:
+            raise serializers.ValidationError("Either (type and number) or identityId or verificationId must be provided.")
+            
+        return data
 
 class IdentityStatusSerializer(serializers.ModelSerializer):
     class Meta:
