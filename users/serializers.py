@@ -33,13 +33,14 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False)
     firstName = serializers.CharField(source='first_name', required=False)
     lastName = serializers.CharField(source='last_name', required=False)
+    phone_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     displayName = serializers.SerializerMethodField()
     currency_preference = serializers.ChoiceField(choices=['NGN', 'USD'], required=False)
     hide_balance = serializers.BooleanField(required=False)
     
     class Meta:
         model = User
-        fields = ['email', 'firstName', 'lastName', 'displayName', 'currency_preference', 'hide_balance']
+        fields = ['email', 'firstName', 'lastName', 'phone_number', 'displayName', 'currency_preference', 'hide_balance']
 
     def get_displayName(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
@@ -157,4 +158,3 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
             device_profile.save()
 
         return device_profile
-

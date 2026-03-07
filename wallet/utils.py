@@ -183,9 +183,22 @@ class NOWPaymentsClient:
             return response.json()
         except requests.RequestException as e:
             logger.error(f"NOWPayments payment error: {str(e)}")
+            msg = str(e)
             if e.response is not None:
                 logger.error(f"NOWPayments response: {e.response.text}")
-            raise GatewayError(f"NOWPayments Error: {str(e)}")
+                try:
+                    resp_data = e.response.json()
+                    # extract meaningful message
+                    if 'message' in resp_data:
+                        msg = resp_data['message']
+                    elif 'error' in resp_data:
+                        msg = resp_data['error']
+                    else:
+                         msg = e.response.text
+                except ValueError:
+                    msg = e.response.text
+            
+            raise GatewayError(msg)
 
     def get_estimated_price(self, amount, currency_from='usd', currency_to='usdtbsc'):
         """

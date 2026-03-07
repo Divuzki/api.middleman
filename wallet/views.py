@@ -84,12 +84,13 @@ class DepositView(APIView):
                                     phone=phone
                                 )
                             except Exception as e:
-                                logger.warning(f"Failed to update customer phone: {e}")
-                                # If customer not found (404), clear code to force recreation
-                                if "404" in str(e) or "Not Found" in str(e):
-                                    logger.info("Clearing stale Paystack customer code due to 404")
+                                err_msg = str(e)
+                                if "404" in err_msg or "Not Found" in err_msg:
+                                    logger.info(f"Paystack customer {user.paystack_customer_code} not found (404). Clearing code to recreate.")
                                     user.paystack_customer_code = None
                                     user.save()
+                                else:
+                                    logger.warning(f"Failed to update customer phone: {e}")
 
                         # Create Customer if needed (either didn't exist or was just cleared)
                         if not user.paystack_customer_code:
@@ -169,12 +170,21 @@ class DepositView(APIView):
                     
                     client = NOWPaymentsClient()
                     
-                    result = client.create_payment(
-                        ref, 
-                        total_amount, 
-                        pay_currency="USDTBSC",
-                        price_currency="usd"
-                    )
+                    try:
+                        result = client.create_payment(
+                            ref, 
+                            total_amount, 
+                            pay_currency="USDTBSC",
+                            price_currency="usd"
+                        )
+                    except GatewayError as e:
+                        tx.status = 'FAILED'
+                        tx.save()
+                        err_msg = str(e).lower()
+                        if "amount" in err_msg or "too small" in err_msg:
+                            raise ValidationError(str(e))
+                        logger.error(f"NOWPayments GatewayError for tx {ref}: {e}")
+                        raise e
                     
                     if result and result.get('pay_address'):
                         payment_details = {
