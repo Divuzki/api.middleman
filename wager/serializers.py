@@ -26,7 +26,7 @@ class WagerSerializer(serializers.ModelSerializer):
     drawRequestedBy = serializers.SerializerMethodField()
     
     # Write-only fields for creating, read-only for retrieval
-    status = serializers.SerializerMethodField()
+    status = serializers.CharField(read_only=True)
     shareLink = serializers.CharField(source='share_link', read_only=True)
     drawStatus = serializers.CharField(read_only=True)
     
@@ -44,11 +44,6 @@ class WagerSerializer(serializers.ModelSerializer):
             'creator', 'opponent', 'shareLink',
             'drawStatus', 'drawRequestedBy'
         ]
-
-    def get_status(self, obj):
-        if obj.status == 'DRAW':
-            return 'DRAW'
-        return obj.status
 
     def get_drawRequestedBy(self, obj):
         if obj.drawRequestedBy:
