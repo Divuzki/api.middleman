@@ -10,7 +10,7 @@ class AuthUserSerializer(serializers.ModelSerializer):
     uid = serializers.CharField(source='firebase_uid')
     firstName = serializers.CharField(source='first_name')
     lastName = serializers.CharField(source='last_name')
-    image_url = serializers.CharField(source='image_url', read_only=True)
+    image_url = serializers.CharField(read_only=True)
     balance = serializers.SerializerMethodField()
 
     class Meta:
