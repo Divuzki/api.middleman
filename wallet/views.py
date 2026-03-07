@@ -111,9 +111,46 @@ class DepositView(APIView):
                             dva_resp = client.create_dedicated_account(user.paystack_customer_code)
                         except GatewayError as e:
                             # Check if error is about missing phone
-                            if "phone number is required" in str(e):
-                                raise ValidationError("Phone number is required for bank transfer. Please update your profile or provide 'phone' in the request.")
-                            raise e
+                            if "phone number is required" in str(e).lower() and phone:
+                                logger.info(f"DVA creation failed due to missing phone for {user.email}. Attempting to update customer phone and retry.")
+                                try:
+                                    # Attempt to update phone
+                                    client.update_customer(
+                                        user.paystack_customer_code,
+                                        first_name=user.first_name,
+                                        last_name=user.last_name,
+                                        phone=phone
+                                    )
+                                    # Retry DVA creation
+                                    dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                                except Exception as inner_e:
+                                    # If update_customer failed with 404, the code is invalid. Recreate customer.
+                                    inner_msg = str(inner_e)
+                                    if "404" in inner_msg or "Not Found" in inner_msg:
+                                        logger.info(f"Paystack customer {user.paystack_customer_code} not found during recovery. Recreating customer.")
+                                        user.paystack_customer_code = None
+                                        
+                                        cust_resp = client.create_customer(
+                                            email=user.email,
+                                            first_name=user.first_name,
+                                            last_name=user.last_name,
+                                            phone=phone
+                                        )
+                                        if cust_resp and cust_resp.get('status'):
+                                            user.paystack_customer_code = cust_resp['data']['customer_code']
+                                            user.save()
+                                            # Retry DVA creation with NEW code
+                                            dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                                        else:
+                                            raise inner_e # Failed to recreate
+                                    else:
+                                        logger.error(f"Failed to recover from missing phone error: {inner_e}")
+                                        # If retry fails, fallback to original error message behavior
+                                        raise ValidationError("Phone number is required for bank transfer. Please update your profile or provide 'phone' in the request.")
+                            elif "phone number is required" in str(e).lower():
+                                 raise ValidationError("Phone number is required for bank transfer. Please update your profile or provide 'phone' in the request.")
+                            else:
+                                raise e
 
                         if dva_resp and dva_resp.get('status'):
                             data = dva_resp['data']

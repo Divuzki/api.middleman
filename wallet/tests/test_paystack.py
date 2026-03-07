@@ -2,6 +2,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
+from middleman_api.exceptions import GatewayError
 from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Transaction
 
@@ -150,6 +151,157 @@ class PaystackIntegrationTests(APITestCase):
         # and just focus on the logic AFTER signature.
         # But if signature fails, test fails.
         pass
+
+    @patch('wallet.views.PaystackClient')
+    def test_deposit_retry_on_missing_phone(self, MockPaystackClient):
+        """
+        Test that if DVA creation fails due to missing phone number, 
+        the system attempts to update the customer with the phone number 
+        and retries the DVA creation.
+        """
+        # Setup mock instance
+        mock_client = MockPaystackClient.return_value
+        
+        # Setup test data
+        phone_number = '08012345678'
+        customer_code = 'CUS_RETRY_TEST'
+        
+        # 1. User initially has no code
+        self.user.paystack_customer_code = None
+        self.user.save()
+        
+        # 2. Mock create_customer to return a code
+        mock_client.create_customer.return_value = {
+            'status': True,
+            'data': {'customer_code': customer_code}
+        }
+        
+        # 3. Mock update_customer to succeed
+        mock_client.update_customer.return_value = {'status': True, 'message': 'Customer updated'}
+        
+        # 4. Mock create_dedicated_account side effects
+        # First call raises GatewayError with specific message
+        # Second call returns success response
+        mock_client.create_dedicated_account.side_effect = [
+            GatewayError("Paystack Error: Customer phone number is required"),
+            {
+                'status': True,
+                'data': {
+                    'bank': {'name': 'Wema Bank'},
+                    'account_name': 'Test User',
+                    'account_number': '1234567890',
+                }
+            }
+        ]
+        
+        # Perform Request
+        data = {'amount': 5000, 'currency': 'NGN', 'phone': phone_number}
+        response = self.client.post(self.deposit_url, data, format='json')
+        
+        # Assertions
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('data', response.data)
+        self.assertIn('bankTransferDetails', response.data['data'])
+        
+        # Verify create_customer was called
+        mock_client.create_customer.assert_called()
+        
+        # Verify create_dedicated_account was called TWICE
+        self.assertEqual(mock_client.create_dedicated_account.call_count, 2)
+        
+        # Verify update_customer was called with the correct params
+        mock_client.update_customer.assert_called_with(
+            customer_code,
+            first_name='Test',
+            last_name='User',
+            phone=phone_number
+        )
+
+    @patch('wallet.views.PaystackClient')
+    def test_deposit_retry_on_customer_not_found_during_recovery(self, MockPaystackClient):
+        """
+        Test that if DVA creation fails due to missing phone number, 
+        and the subsequent update_customer call fails with 404 (customer not found),
+        the system recreates the customer and retries DVA creation.
+        """
+        # Setup mock instance
+        mock_client = MockPaystackClient.return_value
+        
+        # Setup test data
+        phone_number = '08099998888'
+        invalid_code = 'CUS_INVALID'
+        new_code = 'CUS_NEW_VALID'
+        
+        # 1. User initially has an INVALID code
+        self.user.paystack_customer_code = invalid_code
+        self.user.save()
+        
+        # 2. Define side effects
+        
+        # update_customer side effects:
+        # 1. First call (Initial Check): Fails with generic error (so code is NOT cleared)
+        # 2. Second call (Recovery): Fails with 404 (triggering our new fix)
+        mock_client.update_customer.side_effect = [
+            Exception("Temporary Connection Error"), 
+            GatewayError("Paystack Error: 404 Client Error: Not Found")
+        ]
+        
+        # create_customer: Returns NEW code
+        mock_client.create_customer.return_value = {
+            'status': True,
+            'data': {'customer_code': new_code}
+        }
+        
+        # create_dedicated_account:
+        # First call (with invalid code): Fails with "phone number is required"
+        # Second call (with NEW code): Succeeds
+        mock_client.create_dedicated_account.side_effect = [
+            GatewayError("Paystack Error: Customer phone number is required"),
+            {
+                'status': True,
+                'data': {
+                    'bank': {'name': 'Wema Bank'},
+                    'account_name': 'Test User',
+                    'account_number': '1234567890',
+                }
+            }
+        ]
+        
+        # Perform Request
+        data = {'amount': 5000, 'currency': 'NGN', 'phone': phone_number}
+        response = self.client.post(self.deposit_url, data, format='json')
+        
+        # Assertions
+        if response.status_code != status.HTTP_200_OK:
+            print(f"Test Failed Response: {response.data}")
+            
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('data', response.data)
+        self.assertIn('bankTransferDetails', response.data['data'])
+        
+        # Verify update_customer was called TWICE
+        self.assertEqual(mock_client.update_customer.call_count, 2)
+        
+        # Verify calls were made with INVALID code
+        # We check the arguments of the calls
+        calls = mock_client.update_customer.call_args_list
+        self.assertEqual(calls[0][0][0], invalid_code) # First arg of first call
+        self.assertEqual(calls[1][0][0], invalid_code) # First arg of second call
+        
+        # Verify create_customer was called (recovery step)
+        mock_client.create_customer.assert_called_with(
+            email='test@example.com',
+            first_name='Test',
+            last_name='User',
+            phone=phone_number
+        )
+        
+        # Verify create_dedicated_account was called TWICE
+        self.assertEqual(mock_client.create_dedicated_account.call_count, 2)
+        
+        # Verify User model updated
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.paystack_customer_code, new_code)
 
 def import_json_dumps(data):
     import json

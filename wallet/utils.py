@@ -37,9 +37,20 @@ class PaystackClient:
             return response.json()
         except requests.RequestException as e:
             logger.error(f"Paystack API error ({endpoint}): {str(e)}")
+            msg = str(e)
             if e.response is not None:
                 logger.error(f"Paystack response: {e.response.text}")
-            raise GatewayError(f"Paystack Error: {str(e)}")
+                try:
+                    resp_data = e.response.json()
+                    # Check for 'message' field which Paystack usually returns
+                    if 'message' in resp_data:
+                        msg = resp_data['message']
+                    # Sometimes errors are nested
+                    elif 'data' in resp_data and isinstance(resp_data['data'], dict) and 'message' in resp_data['data']:
+                         msg = resp_data['data']['message']
+                except ValueError:
+                    pass
+            raise GatewayError(f"Paystack Error: {msg}")
 
     def create_customer(self, email, first_name, last_name, phone=None):
         """
