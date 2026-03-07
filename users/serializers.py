@@ -10,11 +10,12 @@ class AuthUserSerializer(serializers.ModelSerializer):
     uid = serializers.CharField(source='firebase_uid')
     firstName = serializers.CharField(source='first_name')
     lastName = serializers.CharField(source='last_name')
+    image_url = serializers.CharField(source='image_url', read_only=True)
     balance = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['uid', 'email', 'firstName', 'lastName', 'phone_number', 'isIdentityVerified', 'has_set_account_pin', 'balance', 'is_active', 'currency_preference', 'hide_balance']
+        fields = ['uid', 'email', 'firstName', 'lastName', 'image_url', 'phone_number', 'isIdentityVerified', 'has_set_account_pin', 'balance', 'is_active', 'currency_preference', 'hide_balance']
 
     def get_balance(self, obj):
         try:

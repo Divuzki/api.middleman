@@ -77,18 +77,10 @@ class AgreementSerializer(serializers.ModelSerializer):
 
     def get_initialOffer(self, obj):
         # Return the first offer if it exists (usually created by seller on init)
-        # We need to filter offers related to this agreement.
-        # When creating, the relation might be cached as empty on the 'obj' instance if it was fetched before offers were added.
-        # To be safe, we can query the DB directly if we have an ID, or use the manager.
         if obj.pk:
             first_offer = AgreementOffer.objects.filter(agreement=obj).order_by('created_at').first()
             if first_offer:
-                return {
-                    "amount": float(first_offer.amount),
-                    "amount_ngn": float(first_offer.amount_ngn) if first_offer.amount_ngn else None,
-                    "amount_usd": float(first_offer.amount_usd) if first_offer.amount_usd else None,
-                    "timeline": first_offer.timeline
-                }
+                return AgreementOfferSerializer(first_offer).data
         return None
 
     def create(self, validated_data):

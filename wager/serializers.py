@@ -47,7 +47,7 @@ class WagerSerializer(serializers.ModelSerializer):
 
     def get_status(self, obj):
         if obj.status == 'DRAW':
-            return 'COMPLETED'
+            return 'DRAW'
         return obj.status
 
     def get_drawRequestedBy(self, obj):
