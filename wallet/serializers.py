@@ -44,7 +44,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'amount', 'amount_usd', 'amount_ngn', 'type', 'category', 'status', 'reference', 'description', 'icon', 'date']
 
     def get_type(self, obj):
-        if obj.transaction_type in ['DEPOSIT', 'WAGER_WIN']:
+        if obj.transaction_type in ['DEPOSIT', 'WAGER_WIN', 'WAGER_REFUND', 'AGREEMENT_PAYOUT']:
             return 'credit'
         return 'debit'
 
