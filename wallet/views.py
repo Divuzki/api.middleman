@@ -84,8 +84,8 @@ class DepositView(APIView):
                                     phone=phone
                                 )
                             except Exception as e:
-                                err_msg = str(e)
-                                if "404" in err_msg or "Not Found" in err_msg:
+                                err_msg = str(e).lower()
+                                if "404" in err_msg or "not found" in err_msg:
                                     logger.info(f"Paystack customer {user.paystack_customer_code} not found (404). Clearing code to recreate.")
                                     user.paystack_customer_code = None
                                     user.save()
@@ -125,8 +125,8 @@ class DepositView(APIView):
                                     dva_resp = client.create_dedicated_account(user.paystack_customer_code)
                                 except Exception as inner_e:
                                     # If update_customer failed with 404, the code is invalid. Recreate customer.
-                                    inner_msg = str(inner_e)
-                                    if "404" in inner_msg or "Not Found" in inner_msg:
+                                    inner_msg = str(inner_e).lower()
+                                    if "404" in inner_msg or "not found" in inner_msg:
                                         logger.info(f"Paystack customer {user.paystack_customer_code} not found during recovery. Recreating customer.")
                                         user.paystack_customer_code = None
                                         
