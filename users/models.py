@@ -41,6 +41,7 @@ class User(AbstractUser):
     """User model."""
     username = None
     email = models.EmailField(unique=True)
+    phone_number = models.CharField(max_length=15, blank=True, null=True)
     image_url = models.URLField(blank=True, null=True)
     firebase_uid = models.CharField(max_length=128, unique=True, blank=True, null=True)
     isIdentityVerified = models.BooleanField(default=False)

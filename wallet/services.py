@@ -14,54 +14,62 @@ class WalletEngine:
     """
 
     @staticmethod
+    def approve_transaction(transaction_id):
+        """
+        Approves a transaction and updates the wallet balance atomically.
+        """
+        try:
+            with transaction.atomic():
+                # Lock the transaction row
+                try:
+                    txn = Transaction.objects.select_for_update().get(pk=transaction_id)
+                except Transaction.DoesNotExist:
+                    raise ValidationError(f"Transaction with ID {transaction_id} not found.")
+
+                if txn.status == 'SUCCESSFUL':
+                    logger.warning(f"Transaction {txn.reference} is already SUCCESSFUL. Skipping approval.")
+                    return
+
+                # Lock the wallet row
+                try:
+                    wallet = Wallet.objects.select_for_update().get(pk=txn.wallet_id)
+                except Wallet.DoesNotExist:
+                    raise ValidationError(f"Wallet with ID {txn.wallet_id} not found.")
+
+                if txn.transaction_type == 'DEPOSIT':
+                    WalletEngine._credit_wallet(wallet, txn)
+                elif txn.transaction_type == 'WITHDRAWAL':
+                    WalletEngine._debit_wallet(wallet, txn)
+                
+                txn.status = 'SUCCESSFUL'
+                txn.save()
+
+                logger.info(f"Transaction {txn.reference} approved and balance updated.")
+
+                # Notify user
+                User = get_user_model()
+                try:
+                    user = User.objects.get(pk=wallet.user_id)
+                    notify_balance_update(user)
+                except User.DoesNotExist:
+                    logger.warning(f"User {wallet.user_id} not found for wallet {wallet.pk}, skipping notification")
+
+        except ValidationError as e:
+            logger.warning(f"Validation failed for Transaction {transaction_id}: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Critical error approving Transaction {transaction_id}: {str(e)}")
+            raise ValidationError(f"Failed to approve transaction: {str(e)}")
+
+    @staticmethod
     def process_transaction_update(sender, instance, **kwargs):
         """
-        Orchestrates balance updates based on transaction status changes.
-        Designed to be called from a pre_save signal.
+        DEPRECATED: Use approve_transaction instead.
         """
-        # Only process updates, not creations (handled by respective services)
-        if not instance.pk:
-            return
-
-        try:
-            old_instance = Transaction.objects.get(pk=instance.pk)
-        except Transaction.DoesNotExist:
-            return
-
-        # Detect transition to SUCCESSFUL
-        if old_instance.status != 'SUCCESSFUL' and instance.status == 'SUCCESSFUL':
-            logger.info(f"Processing balance update for Transaction {instance.reference} ({instance.transaction_type})")
-            
-            try:
-                # Use atomic transaction to ensure data integrity
-                with transaction.atomic():
-                    # Lock the wallet to prevent race conditions
-                    wallet = Wallet.objects.select_for_update().get(pk=instance.wallet.pk)
-                    
-                    if instance.transaction_type == 'DEPOSIT':
-                        WalletEngine._credit_wallet(wallet, instance)
-                    
-                    elif instance.transaction_type == 'WITHDRAWAL':
-                        WalletEngine._debit_wallet(wallet, instance)
-                    
-                    # Log the successful operation
-                    logger.info(f"Balance updated successfully for Wallet {wallet.pk}. New Balance: {wallet.balance}")
-
-                    # Notify user of balance update
-                    User = get_user_model()
-                    try:
-                        user = User.objects.get(pk=wallet.user_id)
-                        notify_balance_update(user)
-                    except User.DoesNotExist:
-                        logger.warning(f"User {wallet.user_id} not found for wallet {wallet.pk}, skipping notification")
-
-            except ValidationError as e:
-                # Re-raise validation errors to abort the save
-                logger.warning(f"Validation failed for Transaction {instance.reference}: {str(e)}")
-                raise
-            except Exception as e:
-                logger.error(f"Critical error updating balance for Transaction {instance.reference}: {str(e)}")
-                raise ValidationError(f"Failed to process transaction: {str(e)}")
+        # This method is deprecated and should not be used.
+        # Logic has been moved to approve_transaction.
+        logger.warning("process_transaction_update is deprecated. Use approve_transaction instead.")
+        return
 
     @staticmethod
     def _credit_wallet(wallet, transaction_instance):
@@ -101,7 +109,6 @@ class PayoutService:
         # Simulate payout processing logic here (e.g., call to external payout API)
         # For now, we assume success immediately.
         
-        transaction.status = 'SUCCESSFUL'
-        transaction.save()
+        WalletEngine.approve_transaction(transaction.pk)
         
         logger.info(f"Payout successful for transaction {transaction.reference}")

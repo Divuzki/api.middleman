@@ -15,9 +15,9 @@ import uuid
 import logging
 
 from .models import Wallet, Transaction
-from .services import PayoutService
+from .services import PayoutService, WalletEngine
 from .serializers import DepositSerializer, WithdrawalSerializer, TransactionSerializer, DepositVerificationSerializer
-from users.notifications import notify_balance_update
+
 from .utils import (
     PaystackClient, 
     NOWPaymentsClient, 
@@ -64,11 +64,15 @@ class DepositView(APIView):
                     
                     # 1. Check if user already has a DVA
                     if not user.virtual_account_number:
-                        phone = getattr(user, 'phone_number', None)
+                        phone = user.phone_number
                         if not phone:
                             # Try to get phone from request if user model doesn't have it
-                            # Note: This requires the frontend to send 'phone' if it's missing on profile
                             phone = request.data.get('phone')
+                            
+                            # If found in request but not user, update user.phone_number and save
+                            if phone:
+                                user.phone_number = phone
+                                user.save()
                         
                         # Create Customer if needed
                         if not user.paystack_customer_code:
@@ -304,9 +308,8 @@ class VerifyDepositView(GenericAPIView):
         
         if success:
              try:
-                tx.status = 'SUCCESSFUL'
-                tx.save()
-                notify_balance_update(request.user)
+                WalletEngine.approve_transaction(tx.pk)
+                # notify_balance_update is handled by approve_transaction
                 return self.get_success_response(tx, wallet)
              except Exception as e:
                 logger.error(f"Verification DB error: {e}")
@@ -403,12 +406,7 @@ class PaystackWebhookView(APIView):
                 tx.status = 'PENDING'
                 tx.save()
                 
-                tx.status = 'SUCCESSFUL'
-                tx.save() # This should trigger the signal
-                
-                # Fallback if signal doesn't work for some reason (e.g. if signal is only on pre_save with change)
-                wallet.refresh_from_db()
-                notify_balance_update(user)
+                WalletEngine.approve_transaction(tx.pk)
                 
             except Exception as e:
                 logger.error(f"Paystack Webhook Error: {e}")
@@ -443,13 +441,7 @@ class NOWPaymentsWebhookView(APIView):
             return StandardResponse(message="Currency mismatch, pending")
         if payment_status in ['finished', 'confirmed', 'sending']:
             try:
-                tx.status = 'SUCCESSFUL'
-                tx.save()
-                
-                # Notify user
-                wallet = Wallet.objects.get(id=tx.wallet_id)
-                user = User.objects.get(id=wallet.user_id)
-                notify_balance_update(user)
+                WalletEngine.approve_transaction(tx.pk)
             except Exception:
                 return StandardResponse(status=status.HTTP_500_INTERNAL_SERVER_ERROR, code="error", message="Error updating transaction")
         return StandardResponse(message="Webhook processed")
