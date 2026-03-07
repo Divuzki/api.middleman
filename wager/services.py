@@ -1,3 +1,4 @@
+
 from django.db import transaction
 from decimal import Decimal
 from .models import Wager, ChatMessage
@@ -52,7 +53,8 @@ class WagerService:
                 category='Wager Stake',
                 status='SUCCESSFUL',
                 reference=f"wager_stake_{uuid.uuid4().hex[:12]}",
-                description="Stake for wager creation"
+                description="Stake for wager creation",
+                payment_currency=wager_currency  # Log the original wager currency
             )
 
         if 'pin' in wager_data:
@@ -84,7 +86,8 @@ class WagerService:
                     category='Reversal',
                     status='SUCCESSFUL',
                     reference=f"wager_refund_{uuid.uuid4().hex[:12]}",
-                    description="Reversal for failed wager creation"
+                    description="Reversal for failed wager creation",
+                    payment_currency=wager_currency
                 )
             raise
 
@@ -165,7 +168,8 @@ class WagerService:
                 category='Wager Cancel Refund',
                 status='SUCCESSFUL',
                 reference=f"wager_cancel_{wager.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Refund for cancelled wager {wager.id}"
+                description=f"Refund for cancelled wager {wager.id}",
+                payment_currency=wager_currency
             )
 
         # 3. Update Wager
@@ -204,7 +208,8 @@ class WagerService:
                     category='Reversal',
                     status='SUCCESSFUL',
                     reference=f"wager_cancel_reversal_{uuid.uuid4().hex[:8]}",
-                    description=f"Reversal for failed wager cancel {wager.id}"
+                    description=f"Reversal for failed wager cancel {wager.id}",
+                    payment_currency=wager_currency
                 )
             raise
             
@@ -225,46 +230,61 @@ class WagerService:
                  raise ValueError("Wager is already completed")
         
         # 2. Refund Wallets
-        amount = Decimal(wager.amount)
+        wager_amount = Decimal(wager.amount)
+        wager_currency = wager.currency
+        creator_refund = None
+        opponent_refund = None
         
         with transaction.atomic(using='wallet_db'):
             # Refund Creator
             creator_wallet = Wallet.objects.select_for_update().get(user_id=wager.creator_id)
-            creator_wallet.balance += amount
+            
+            creator_refund = convert_currency(wager_amount, wager_currency, creator_wallet.currency)
+            if creator_refund is None:
+                 raise ValueError(f"Currency conversion failed for creator wallet")
+            
+            creator_wallet.balance += creator_refund
             creator_wallet.save()
             
-            converted_creator = get_converted_amounts(amount, creator_wallet.currency)
+            converted_creator = get_converted_amounts(creator_refund, creator_wallet.currency)
             Transaction.objects.create(
                 wallet=creator_wallet,
                 title=f"Draw Refund: {wager.title}",
-                amount=converted_creator.get('amount_ngn') or amount,
+                amount=creator_refund,
                 amount_usd=converted_creator.get('amount_usd'),
                 amount_ngn=converted_creator.get('amount_ngn'),
                 transaction_type='WAGER_PAYMENT',
                 category='Draw Refund',
                 status='SUCCESSFUL',
                 reference=f"draw_refund_creator_{wager.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Refund for drawn wager {wager.id}"
+                description=f"Refund for drawn wager {wager.id}",
+                payment_currency=wager_currency
             )
             
             # Refund Opponent
             if wager.opponent_id:
                 opponent_wallet = Wallet.objects.select_for_update().get(user_id=wager.opponent_id)
-                opponent_wallet.balance += amount
+                
+                opponent_refund = convert_currency(wager_amount, wager_currency, opponent_wallet.currency)
+                if opponent_refund is None:
+                     raise ValueError(f"Currency conversion failed for opponent wallet")
+                
+                opponent_wallet.balance += opponent_refund
                 opponent_wallet.save()
                 
-                converted_opponent = get_converted_amounts(amount, opponent_wallet.currency)
+                converted_opponent = get_converted_amounts(opponent_refund, opponent_wallet.currency)
                 Transaction.objects.create(
                     wallet=opponent_wallet,
                     title=f"Draw Refund: {wager.title}",
-                    amount=converted_opponent.get('amount_ngn') or amount,
+                    amount=opponent_refund,
                     amount_usd=converted_opponent.get('amount_usd'),
                     amount_ngn=converted_opponent.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',
                     category='Draw Refund',
                     status='SUCCESSFUL',
                     reference=f"draw_refund_opponent_{wager.id}_{uuid.uuid4().hex[:8]}",
-                    description=f"Refund for drawn wager {wager.id}"
+                    description=f"Refund for drawn wager {wager.id}",
+                    payment_currency=wager_currency
                 )
 
         # 3. Update Wager
@@ -286,41 +306,51 @@ class WagerService:
             with transaction.atomic(using='wallet_db'):
                 # Revert Creator
                 creator_wallet = Wallet.objects.select_for_update().get(user_id=wager.creator_id)
-                creator_wallet.balance -= amount
+                
+                if creator_refund is None:
+                     creator_refund = convert_currency(wager_amount, wager_currency, creator_wallet.currency)
+                
+                creator_wallet.balance -= creator_refund
                 creator_wallet.save()
                 
-                converted_creator = get_converted_amounts(amount, creator_wallet.currency)
+                converted_creator = get_converted_amounts(creator_refund, creator_wallet.currency)
                 Transaction.objects.create(
                     wallet=creator_wallet,
                     title="Draw Refund Reversal",
-                    amount=converted_creator.get('amount_ngn') or amount,
+                    amount=creator_refund,
                     amount_usd=converted_creator.get('amount_usd'),
                     amount_ngn=converted_creator.get('amount_ngn'),
                     transaction_type='WAGER_PAYMENT',
                     category='Reversal',
                     status='SUCCESSFUL',
                     reference=f"draw_rev_creator_{wager.id}_{uuid.uuid4().hex[:8]}",
-                    description=f"Reversal for failed draw acceptance {wager.id}"
+                    description=f"Reversal for failed draw acceptance {wager.id}",
+                    payment_currency=wager_currency
                 )
                 
                 # Revert Opponent
                 if wager.opponent_id:
                     opponent_wallet = Wallet.objects.select_for_update().get(user_id=wager.opponent_id)
-                    opponent_wallet.balance -= amount
+                    
+                    if opponent_refund is None:
+                         opponent_refund = convert_currency(wager_amount, wager_currency, opponent_wallet.currency)
+                    
+                    opponent_wallet.balance -= opponent_refund
                     opponent_wallet.save()
                     
-                    converted_opponent = get_converted_amounts(amount, opponent_wallet.currency)
+                    converted_opponent = get_converted_amounts(opponent_refund, opponent_wallet.currency)
                     Transaction.objects.create(
                         wallet=opponent_wallet,
                         title="Draw Refund Reversal",
-                        amount=converted_opponent.get('amount_ngn') or amount,
+                        amount=opponent_refund,
                         amount_usd=converted_opponent.get('amount_usd'),
                         amount_ngn=converted_opponent.get('amount_ngn'),
                         transaction_type='WAGER_PAYMENT',
                         category='Reversal',
                         status='SUCCESSFUL',
                         reference=f"draw_rev_opponent_{wager.id}_{uuid.uuid4().hex[:8]}",
-                        description=f"Reversal for failed draw acceptance {wager.id}"
+                        description=f"Reversal for failed draw acceptance {wager.id}",
+                        payment_currency=wager_currency
                     )
             raise
 
@@ -364,7 +394,8 @@ class WagerService:
                 category='Wager Stake',
                 status='SUCCESSFUL',
                 reference=f"wager_join_{wager.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Stake for joining wager {wager.id}"
+                description=f"Stake for joining wager {wager.id}",
+                payment_currency=wager_currency
             )
 
         try:
@@ -403,6 +434,7 @@ class WagerService:
                     category='Reversal',
                     status='SUCCESSFUL',
                     reference=f"wager_join_refund_{uuid.uuid4().hex[:8]}",
-                    description=f"Reversal for failed wager join {wager.id}"
+                    description=f"Reversal for failed wager join {wager.id}",
+                    payment_currency=wager_currency
                 )
             raise

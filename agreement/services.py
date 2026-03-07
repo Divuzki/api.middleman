@@ -1,8 +1,9 @@
+
 from django.db import transaction
 from django.utils import timezone
 from .models import Agreement, AgreementOffer, ChatMessage
 from wallet.models import Wallet, Transaction
-from middleman_api.utils import get_converted_amounts
+from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
 
 class AgreementService:
@@ -62,32 +63,42 @@ class AgreementService:
                     except Wallet.DoesNotExist:
                         raise ValueError("Buyer wallet not found")
 
-                    if buyer_wallet.balance < offer.amount:
+                    # Convert offer amount (agreement currency) to wallet currency
+                    wallet_amount = convert_currency(offer.amount, agreement.currency, buyer_wallet.currency)
+                    if wallet_amount is None:
+                         raise ValueError(f"Currency conversion failed from {agreement.currency} to {buyer_wallet.currency}")
+
+                    if buyer_wallet.balance < wallet_amount:
                         raise ValueError("Insufficient funds in wallet")
                     
                     # Debit Wallet
-                    buyer_wallet.balance -= offer.amount
+                    buyer_wallet.balance -= wallet_amount
                     buyer_wallet.save()
                     
                     # Create Transaction Record
-                    converted = get_converted_amounts(offer.amount, buyer_wallet.currency)
+                    converted = get_converted_amounts(wallet_amount, buyer_wallet.currency)
                     Transaction.objects.create(
                         wallet=buyer_wallet,
                         title=f"Escrow Lock: {agreement.title}",
-                        amount=converted.get('amount_ngn') or offer.amount,
+                        amount=wallet_amount,
                         amount_usd=converted.get('amount_usd'),
                         amount_ngn=converted.get('amount_ngn'),
-                        transaction_type='TRANSFER',
+                        transaction_type='AGREEMENT_PAYMENT', # Using new type if available, else TRANSFER
                         category='Escrow Lock',
                         status='SUCCESSFUL',
                         reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                        description=f"Funds locked for agreement {agreement.id}"
+                        description=f"Funds locked for agreement {agreement.id}",
+                        payment_currency=agreement.currency
                     )
                     
                     # Update Agreement (using locked instance)
-                    agreement_locked.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
-                    agreement_locked.amount_usd = converted.get('amount_usd') or offer.amount_usd
-                    agreement_locked.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
+                    # Note: We keep agreement amounts in original currency/values
+                    # But we might want to update USD/NGN values based on current rates
+                    offer_converted = get_converted_amounts(offer.amount, agreement.currency)
+                    
+                    agreement_locked.amount = offer.amount
+                    agreement_locked.amount_usd = offer_converted.get('amount_usd')
+                    agreement_locked.amount_ngn = offer_converted.get('amount_ngn')
                     agreement_locked.timeline = offer.timeline
                     agreement_locked.status = 'active'
                     agreement_locked.secured_at = timezone.now()
@@ -125,23 +136,29 @@ class AgreementService:
             except Wallet.DoesNotExist:
                 raise ValueError("Seller wallet not found")
 
+            # Convert agreement amount to seller wallet currency
+            wallet_amount = convert_currency(agreement.amount, agreement.currency, seller_wallet.currency)
+            if wallet_amount is None:
+                 raise ValueError(f"Currency conversion failed from {agreement.currency} to {seller_wallet.currency}")
+
             # Credit Wallet
-            seller_wallet.balance += agreement.amount
+            seller_wallet.balance += wallet_amount
             seller_wallet.save()
             
             # Create Transaction Record
-            converted = get_converted_amounts(agreement.amount, seller_wallet.currency)
+            converted = get_converted_amounts(wallet_amount, seller_wallet.currency)
             Transaction.objects.create(
                 wallet=seller_wallet,
                 title=f"Escrow Release: {agreement.title}",
-                amount=converted.get('amount_ngn') or agreement.amount,
+                amount=wallet_amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
-                transaction_type='TRANSFER',
+                transaction_type='AGREEMENT_PAYOUT', # Using new type if available
                 category='Escrow Release',
                 status='SUCCESSFUL',
                 reference=f"escrow_release_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Funds released for agreement {agreement.id}"
+                description=f"Funds released for agreement {agreement.id}",
+                payment_currency=agreement.currency
             )
             
             agreement.status = 'completed'
