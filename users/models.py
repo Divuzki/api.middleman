@@ -1,4 +1,4 @@
-from django.contrib.auth.hashers import check_password
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from fcm_django.models import FCMDevice
@@ -68,6 +68,11 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+    def set_transaction_pin(self, raw_pin):
+        self.transaction_pin = make_password(raw_pin)
+        self.has_set_account_pin = True
+        self.save()
 
     def verify_pin(self, pin):
         return check_password(pin, self.transaction_pin)

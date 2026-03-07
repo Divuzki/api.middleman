@@ -10,21 +10,20 @@ from wallet.models import Wallet, Transaction
 from wager.services import WagerService
 from wager.models import Wager
 from rates.models import Rate
+from django.utils import timezone
+import datetime
 
 User = get_user_model()
 
 def run_test():
     print("Setting up test data...")
     # Create Users
-    user_usd, _ = User.objects.get_or_create(email='usd_user@example.com', defaults={'first_name': 'USD', 'transaction_pin': '1234'})
-    user_ngn, _ = User.objects.get_or_create(email='ngn_user@example.com', defaults={'first_name': 'NGN', 'transaction_pin': '1234'})
+    user_usd, _ = User.objects.get_or_create(email='usd_user@example.com', defaults={'first_name': 'USD'})
+    user_ngn, _ = User.objects.get_or_create(email='ngn_user@example.com', defaults={'first_name': 'NGN'})
     
-    if not user_usd.transaction_pin:
-        user_usd.set_transaction_pin('1234')
-        user_usd.save()
-    if not user_ngn.transaction_pin:
-        user_ngn.set_transaction_pin('1234')
-        user_ngn.save()
+    # Always set transaction pin to ensure it is hashed properly
+    user_usd.set_transaction_pin('1234')
+    user_ngn.set_transaction_pin('1234')
 
     # Setup Wallets
     wallet_usd, _ = Wallet.objects.get_or_create(user_id=user_usd.id)
@@ -52,11 +51,11 @@ def run_test():
         'amount': 15000,
         'currency': 'NGN',
         'description': 'Testing currency conversion',
-        'category': 'FIFA',
+        'category': 'Gaming',
         'mode': 'Head-2-Head',
         'platform': 'PS5',
         'proofMethod': 'Mutual confirmation',
-        'expiry': '24'
+        'endDate': timezone.now() + datetime.timedelta(days=1)
     }
     
     try:
@@ -119,18 +118,38 @@ def run_test():
     # 3. Cancel Wager (Refund)
     print("\n--- Test 3: Cancel Wager ---")
     try:
-        # Only creator can cancel
-        WagerService.cancel_wager(user_usd, wager)
+        # Create a NEW wager to test cancellation
+        print("Creating a new wager for cancellation test...")
+        wager_cancel_data = {
+            'title': 'Test Cancel Wager',
+            'amount': 15000,
+            'currency': 'NGN',
+            'description': 'Testing cancellation refund',
+            'category': 'Gaming',
+            'mode': 'Head-2-Head',
+            'platform': 'PS5',
+            'proofMethod': 'Mutual confirmation',
+            'endDate': timezone.now() + datetime.timedelta(days=1)
+        }
+        wager_to_cancel = WagerService.create_wager(user_usd, {**wager_cancel_data, 'pin': '1234'}, pin='1234')
+        print(f"New wager created for cancellation: {wager_to_cancel.id}")
+
+        wallet_usd.refresh_from_db()
+        print(f"USD Wallet Balance after creating cancel-wager: {wallet_usd.balance}")
+        
+        # Cancel the wager
+        WagerService.cancel_wager(user_usd, wager_to_cancel)
         print("Wager cancelled")
         
         wallet_usd.refresh_from_db()
         print(f"USD Wallet Balance after cancel: {wallet_usd.balance}")
         
-        # Should be back to 100
-        if abs(wallet_usd.balance - Decimal('100.00')) < Decimal('0.1'):
+        # Should be back to 90.00 (Since Test 1 deducted 10, creating this deducted another 10 -> 80, canceling refunds 10 -> 90)
+        expected_balance = Decimal('90.00')
+        if abs(wallet_usd.balance - expected_balance) < Decimal('0.1'):
             print("PASS: USD Wallet refunded correctly")
         else:
-             print(f"FAIL: USD Wallet refund incorrect. Expected 100.00, got {wallet_usd.balance}")
+             print(f"FAIL: USD Wallet refund incorrect. Expected {expected_balance}, got {wallet_usd.balance}")
              
         tx_refund = Transaction.objects.filter(wallet=wallet_usd, category='Wager Cancel Refund').last()
         if abs(tx_refund.amount - Decimal('10.00')) < Decimal('0.1'):
