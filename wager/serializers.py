@@ -26,6 +26,7 @@ class WagerSerializer(serializers.ModelSerializer):
     drawRequestedBy = serializers.SerializerMethodField()
     
     # Write-only fields for creating, read-only for retrieval
+    pin = serializers.CharField(write_only=True, required=False)
     status = serializers.CharField(read_only=True)
     shareLink = serializers.CharField(source='share_link', read_only=True)
     drawStatus = serializers.CharField(read_only=True)
@@ -42,7 +43,7 @@ class WagerSerializer(serializers.ModelSerializer):
             'currency', 'amount_ngn', 'amount_usd',
             'endDate', 'status', 'proofMethod', 'hashtags', 
             'creator', 'opponent', 'shareLink',
-            'drawStatus', 'drawRequestedBy'
+            'drawStatus', 'drawRequestedBy', 'pin'
         ]
 
     def get_drawRequestedBy(self, obj):
