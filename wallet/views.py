@@ -128,12 +128,34 @@ class DepositView(APIView):
                                     inner_msg = str(inner_e).lower()
                                     if "404" in inner_msg or "not found" in inner_msg:
                                         logger.info(f"Paystack customer {user.paystack_customer_code} not found during recovery. Recreating customer.")
+                                        
+                                        # Force a new customer record by using an email alias if possible
+                                        # This avoids getting the same broken customer record back from Paystack
+                                        email_to_use = user.email
+                                        if '@' in email_to_use:
+                                            local, domain = email_to_use.split('@', 1)
+                                            # Avoid double aliasing if we already did it
+                                            if '+wallet' not in local:
+                                                email_to_use = f"{local}+wallet@{domain}"
+
                                         user.paystack_customer_code = None
                                         
+                                        # Ensure first_name and last_name are present
+                                        first_name = user.first_name
+                                        last_name = user.last_name
+                                        
+                                        if not first_name or not last_name:
+                                            # Try to derive from email
+                                            name_parts = email_to_use.split('@')[0].split('.')
+                                            if not first_name:
+                                                first_name = name_parts[0].capitalize() if name_parts else "Middleman"
+                                            if not last_name:
+                                                last_name = name_parts[1].capitalize() if len(name_parts) > 1 else "User"
+
                                         cust_resp = client.create_customer(
-                                            email=user.email,
-                                            first_name=user.first_name,
-                                            last_name=user.last_name,
+                                            email=email_to_use,
+                                            first_name=first_name,
+                                            last_name=last_name,
                                             phone=phone
                                         )
                                         if cust_resp and cust_resp.get('status'):

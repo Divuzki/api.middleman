@@ -288,10 +288,62 @@ class PaystackIntegrationTests(APITestCase):
         self.assertEqual(calls[0][0][0], invalid_code) # First arg of first call
         self.assertEqual(calls[1][0][0], invalid_code) # First arg of second call
         
-        # Verify create_customer was called (recovery step)
+        # Verify create_customer was called with ALIAS email (recovery step)
         mock_client.create_customer.assert_called_with(
-            email='test@example.com',
+            email='test+wallet@example.com',
             first_name='Test',
+            last_name='User',
+            phone=phone_number
+        )
+
+    @patch('wallet.views.PaystackClient')
+    def test_deposit_retry_with_missing_names(self, MockPaystackClient):
+        """
+        Test that customer creation succeeds even if user has missing first/last names
+        by falling back to derived names from email.
+        """
+        # Setup mock instance
+        mock_client = MockPaystackClient.return_value
+        
+        # Setup test data
+        phone_number = '08055554444'
+        invalid_code = 'CUS_INVALID'
+        new_code = 'CUS_NEW_VALID'
+        
+        # 1. User with NO names
+        self.user.first_name = ''
+        self.user.last_name = ''
+        self.user.paystack_customer_code = invalid_code
+        self.user.save()
+        
+        # 2. Define side effects (Trigger Recovery Path)
+        mock_client.update_customer.side_effect = GatewayError("Paystack Error: 404 Client Error: Not Found")
+        
+        mock_client.create_customer.return_value = {
+            'status': True,
+            'data': {'customer_code': new_code}
+        }
+        
+        mock_client.create_dedicated_account.side_effect = [
+            GatewayError("Paystack Error: Customer phone number is required"),
+            {'status': True, 'data': {'account_number': '12345'}}
+        ]
+        
+        # Perform Request
+        data = {'amount': 5000, 'currency': 'NGN', 'phone': phone_number}
+        response = self.client.post(self.deposit_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify create_customer was called with derived names
+        # Email is test+wallet@example.com
+        # split('@')[0] -> "test+wallet"
+        # split('.') -> ["test+wallet"]
+        # first_name = "Test+wallet" (Capitalized), last_name = "User" (Default fallback since no second part)
+        
+        mock_client.create_customer.assert_called_with(
+            email='test+wallet@example.com',
+            first_name='Test+wallet',
             last_name='User',
             phone=phone_number
         )
