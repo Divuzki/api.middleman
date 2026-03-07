@@ -74,7 +74,24 @@ class DepositView(APIView):
                                 user.phone_number = phone
                                 user.save()
                         
-                        # Create Customer if needed
+                        # Validate existing customer code if present by trying to update it
+                        if user.paystack_customer_code and phone:
+                            try:
+                                client.update_customer(
+                                    user.paystack_customer_code,
+                                    first_name=user.first_name,
+                                    last_name=user.last_name,
+                                    phone=phone
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to update customer phone: {e}")
+                                # If customer not found (404), clear code to force recreation
+                                if "404" in str(e) or "Not Found" in str(e):
+                                    logger.info("Clearing stale Paystack customer code due to 404")
+                                    user.paystack_customer_code = None
+                                    user.save()
+
+                        # Create Customer if needed (either didn't exist or was just cleared)
                         if not user.paystack_customer_code:
                             cust_resp = client.create_customer(
                                 email=user.email,
@@ -88,18 +105,6 @@ class DepositView(APIView):
                             else:
                                 raise GatewayError("Failed to create Paystack customer")
                         
-                        # Update Customer with phone if it was missing before (Paystack requires phone for DVA)
-                        if phone:
-                            try:
-                                client.update_customer(
-                                    user.paystack_customer_code,
-                                    first_name=user.first_name,
-                                    last_name=user.last_name,
-                                    phone=phone
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to update customer phone: {e}")
-
                         # Create DVA
                         try:
                             dva_resp = client.create_dedicated_account(user.paystack_customer_code)
