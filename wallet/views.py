@@ -58,6 +58,27 @@ class DepositView(APIView):
             
             try:
                 if currency == 'NGN':
+                    # Generate Reference
+                    ref = f"ref_{uuid.uuid4().hex[:12]}"
+
+                    # Create Pending Transaction
+                    Transaction.objects.create(
+                        wallet=wallet,
+                        title="Deposit",
+                        amount=converted.get('amount_ngn') or amount,
+                        amount_usd=converted.get('amount_usd'),
+                        amount_ngn=converted.get('amount_ngn'),
+                        transaction_type='DEPOSIT',
+                        category='Deposit',
+                        status='PENDING',
+                        reference=ref,
+                        icon='savings',
+                        payment_method='PAYSTACK',
+                        payment_currency='NGN'
+                    )
+                    
+                    response_data['reference'] = ref
+
                     # Paystack Dedicated Virtual Account Logic
                     client = PaystackClient()
                     user = request.user
@@ -84,13 +105,11 @@ class DepositView(APIView):
                                     phone=phone
                                 )
                             except Exception as e:
-                                err_msg = str(e).lower()
-                                if "404" in err_msg or "not found" in err_msg:
-                                    logger.info(f"Paystack customer {user.paystack_customer_code} not found (404). Clearing code to recreate.")
-                                    user.paystack_customer_code = None
-                                    user.save()
-                                else:
-                                    logger.warning(f"Failed to update customer phone: {e}")
+                                # If update fails for ANY reason (404, validation, etc.), assume the customer record is broken/unusable.
+                                # Clear the code to force recreation with correct details in the next block.
+                                logger.warning(f"Failed to update customer {user.paystack_customer_code}: {e}. Clearing code to recreate.")
+                                user.paystack_customer_code = None
+                                user.save()
 
                         # Create Customer if needed (either didn't exist or was just cleared)
                         if not user.paystack_customer_code:
