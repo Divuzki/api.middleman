@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound, APIException
 from django.contrib.auth.hashers import check_password
+from datetime import timedelta
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect
 from django.db import transaction
@@ -13,6 +14,8 @@ from django.views.generic import TemplateView
 from django.contrib.auth import get_user_model
 import uuid
 import logging
+import hmac
+import hashlib
 
 from .models import Wallet, Transaction
 from .services import PayoutService, WalletEngine
@@ -398,6 +401,40 @@ class VerifyDepositView(GenericAPIView):
                  status_val = data.get('payment_status')
                  if status_val in ['finished', 'confirmed', 'sending']:
                      success = True
+
+        elif tx.payment_method == 'PAYSTACK' and tx.reference.startswith('ref_'):
+             # Logic for Paystack verification via list_transactions
+             try:
+                 client = PaystackClient()
+                 # Use email or customer code to filter transactions
+                 customer = user.email
+                 if user.paystack_customer_code:
+                     customer = user.paystack_customer_code
+                 
+                 # Fetch successful transactions
+                 response = client.list_transactions(customer=customer, status='success')
+                 
+                 if response and response.get('status'):
+                     transactions = response.get('data', [])
+                     for p_tx in transactions:
+                         # Check if this Paystack transaction is already used
+                         p_ref = p_tx.get('reference')
+                         if Transaction.objects.filter(external_reference=p_ref).exists():
+                             continue
+                         
+                         # Check amount match (Paystack is in kobo)
+                         p_amount = float(p_tx.get('amount', 0)) / 100.0
+                         tx_amount = float(tx.amount)
+                         
+                         # Tolerance check (e.g. within 1.0 NGN)
+                         if abs(p_amount - tx_amount) < 1.0:
+                             # Match found!
+                             tx.external_reference = p_ref
+                             tx.save()
+                             success = True
+                             break
+             except Exception as e:
+                 logger.error(f"Paystack verification error for {reference}: {e}")
         
         if success:
              try:
@@ -450,56 +487,113 @@ class PaystackWebhookView(APIView):
         data = request.data.get('data', {})
         
         if event == 'charge.success':
-            # Identify user by customer code or DVA info
-            customer_code = data.get('customer', {}).get('customer_code')
-            amount_kobo = data.get('amount', 0)
-            amount_ngn = amount_kobo / 100.0
             reference = data.get('reference')
+            amount_kobo = data.get('amount', 0)
+            fees_kobo = data.get('fees', 0)
             
-            # Idempotency check: Check if transaction with this reference already exists
+            # Calculate net amount
+            net_amount_kobo = amount_kobo - fees_kobo
+            net_amount_ngn = net_amount_kobo / 100.0
+            
+            # Idempotency check
+            if Transaction.objects.filter(external_reference=reference).exists():
+                return Response(status=status.HTTP_200_OK)
+            
+            # Also check if reference matches internal reference (in case we passed it)
             if Transaction.objects.filter(reference=reference).exists():
+                # If it exists by internal reference, we should check if it's already successful
+                tx = Transaction.objects.get(reference=reference)
+                if tx.status == 'SUCCESSFUL':
+                    return Response(status=status.HTTP_200_OK)
+                # If pending, we proceed to update it (logic below might handle this if we fall through, 
+                # but better to handle explicit reference match here)
+                
+                # Update amount to net amount if different? 
+                # The user said "calculate net amount and use that".
+                tx.amount = net_amount_ngn
+                tx.amount_ngn = net_amount_ngn
+                # Update external reference if not set (though here reference IS the reference)
+                # Actually if reference==reference, then external_reference might be something else or empty.
+                # Paystack reference is usually different from ours unless we set it. 
+                # If 'reference' in data is OUR reference, then Paystack's own reference is usually in `id` or another field?
+                # Paystack documentation says `reference` is the merchant reference. `id` is Paystack ID.
+                # So if data.reference matches tx.reference, it is the same transaction.
+                
+                # Let's just update and approve.
+                tx.save()
+                WalletEngine.approve_transaction(tx.pk)
                 return Response(status=status.HTTP_200_OK)
 
+            email = data.get('customer', {}).get('email')
+            
             try:
                 # Find User
-                user = User.objects.filter(paystack_customer_code=customer_code).first()
+                user = User.objects.filter(email=email).first()
                 if not user:
-                    logger.error(f"Paystack Webhook: User not found for customer code {customer_code}")
-                    return Response(status=status.HTTP_200_OK) # Ack to stop retries
+                    # Try by customer code
+                    customer_code = data.get('customer', {}).get('customer_code')
+                    if customer_code:
+                         user = User.objects.filter(paystack_customer_code=customer_code).first()
+                
+                if not user:
+                    logger.error(f"Paystack Webhook: User not found for email {email}")
+                    return Response(status=status.HTTP_200_OK)
 
                 wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
                 
-                # Create Transaction & Credit Wallet
-                tx = Transaction.objects.create(
+                # Match Pending Transaction
+                # Criteria: User, Amount (gross or net? usually we store gross in pending deposit, but user might have meant what they transferred),
+                # Time window (24 hours).
+                # Note: The pending transaction created by DepositView has 'amount' = what user wants to deposit.
+                # If user wants to deposit 1000, they pay 1000 + fees (if bearer=depositor) or 1000 (if bearer=merchant).
+                # Paystack amount is what was charged.
+                # Let's assume the pending transaction amount matches the charged amount (gross).
+                amount_charged_ngn = amount_kobo / 100.0
+                
+                time_threshold = timezone.now() - timedelta(hours=24)
+                
+                pending_tx = Transaction.objects.filter(
                     wallet=wallet,
-                    title="Deposit",
-                    amount=amount_ngn,
-                    amount_ngn=amount_ngn,
+                    amount=amount_charged_ngn, # Match by gross amount charged
+                    status='PENDING',
                     transaction_type='DEPOSIT',
-                    category='Deposit',
-                    status='SUCCESSFUL', # Direct success
-                    reference=reference,
-                    payment_method='PAYSTACK',
-                    payment_currency='NGN',
-                    description="Deposit via Virtual Account"
-                )
+                    created_at__gte=time_threshold,
+                    external_reference__isnull=True # Don't double match
+                ).order_by('-created_at').first()
                 
-                # Note: The 'post_save' or 'pre_save' signal in services.py usually handles balance update
-                # IF status changes to SUCCESSFUL. Since we create it as SUCCESSFUL, 
-                # we might need to manually trigger balance update or ensure signal handles creation too.
-                # Looking at services.py: "Only process updates, not creations (handled by respective services)"
-                # So we must credit manually here or save as PENDING then update to SUCCESSFUL.
-                
-                # Let's do Pending -> Successful to trigger the signal logic if applicable, 
-                # OR just update balance directly since we are in a trusted webhook context.
-                # Ideally use WalletEngine if available.
-                
-                # Re-reading services.py: WalletEngine.process_transaction_update handles updates.
-                # So:
-                tx.status = 'PENDING'
-                tx.save()
-                
-                WalletEngine.approve_transaction(tx.pk)
+                if pending_tx:
+                    # Update matched transaction
+                    pending_tx.external_reference = reference
+                    pending_tx.amount = net_amount_ngn
+                    pending_tx.amount_ngn = net_amount_ngn
+                    pending_tx.save()
+                    
+                    WalletEngine.approve_transaction(pending_tx.pk)
+                    
+                else:
+                    # Create new transaction
+                    # We need converted amounts for USD field
+                    converted = get_converted_amounts(net_amount_ngn, 'NGN')
+                    
+                    new_ref = f"ref_{uuid.uuid4().hex[:12]}"
+                    
+                    tx = Transaction.objects.create(
+                        wallet=wallet,
+                        title="Deposit",
+                        amount=net_amount_ngn,
+                        amount_usd=converted.get('amount_usd'),
+                        amount_ngn=net_amount_ngn,
+                        transaction_type='DEPOSIT',
+                        category='Deposit',
+                        status='PENDING', # Create as pending first
+                        reference=new_ref,
+                        external_reference=reference,
+                        payment_method='PAYSTACK',
+                        payment_currency='NGN',
+                        description="Deposit via Paystack Webhook"
+                    )
+                    
+                    WalletEngine.approve_transaction(tx.pk)
                 
             except Exception as e:
                 logger.error(f"Paystack Webhook Error: {e}")

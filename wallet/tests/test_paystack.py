@@ -86,6 +86,25 @@ class PaystackIntegrationTests(APITestCase):
         self.user.paystack_customer_code = 'CUS_WEBHOOK'
         self.user.save()
         
+        # Create a PENDING transaction
+        wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        # Ensure wallet is empty
+        wallet.balance = 0
+        wallet.save()
+        
+        tx = Transaction.objects.create(
+            wallet=wallet,
+            title="Deposit",
+            amount=5000, # Gross amount
+            amount_ngn=5000,
+            transaction_type='DEPOSIT',
+            category='Deposit',
+            status='PENDING',
+            reference='ref_internal_123',
+            payment_method='PAYSTACK',
+            payment_currency='NGN'
+        )
+
         url = reverse('paystack-webhook')
         payload = {
             "event": "charge.success",
@@ -93,64 +112,115 @@ class PaystackIntegrationTests(APITestCase):
                 "id": 302961,
                 "domain": "live",
                 "status": "success",
-                "reference": "ref_webhook_123",
+                "reference": "ref_paystack_external",
                 "amount": 500000, # 5000 NGN
-                "message": None,
-                "gateway_response": "Successful",
-                "paid_at": "2016-09-29T23:42:53.000Z",
-                "created_at": "2016-09-29T23:42:53.000Z",
-                "channel": "card",
-                "currency": "NGN",
-                "ip_address": "41.1.25.1",
-                "metadata": 0,
-                "log": {},
-                "fees": None,
-                "fees_split": None,
-                "authorization": {},
+                "fees": 10000, # 100 NGN
                 "customer": {
-                    "id": 84312,
-                    "first_name": "Bojack",
-                    "last_name": "Horseman",
-                    "email": "bojack@horsys.com",
+                    "email": self.user.email,
                     "customer_code": "CUS_WEBHOOK",
-                    "phone": None,
-                    "metadata": None,
-                    "risk_action": "default"
-                },
-                "plan": {},
-                "subaccount": {}
+                }
             }
         }
         
-        # Mock Signature
+        import json
         import hmac
         import hashlib
         from django.conf import settings
-        secret = settings.PAYSTACK_SECRET_KEY or 'test_secret' # Fallback if env not set in test
-        if not settings.PAYSTACK_SECRET_KEY:
-             settings.PAYSTACK_SECRET_KEY = 'test_secret'
-             
+        
+        # Use a fixed secret for test
+        # We need to ensure the view uses this secret. 
+        # In tests, settings are usually overridden.
+        
+        # Generate signature based on how test client serializes data.
+        # client.post(..., format='json') uses json.dumps(data)
+        json_payload = json.dumps(payload).encode('utf-8')
+        
+        # Since we can't easily control the exact bytes sent by client.post to match our manual hash,
+        # we will construct the request manually or use a simpler approach:
+        # We can use GenericAPIClient or just ensure we match the serialization.
+        # Default json.dumps adds spaces. Django's test client might differ.
+        # Let's try to match it.
+        
         signature = hmac.new(
             key=settings.PAYSTACK_SECRET_KEY.encode('utf-8'),
-            msg=import_json_dumps(payload).encode('utf-8'),
+            msg=json_payload,
             digestmod=hashlib.sha512
         ).hexdigest()
         
-        # Helper for json dumps to match request.body format (no spaces)
-        # Actually Django test client sends json, but signature verification uses raw body.
-        # It's tricky to mock raw body signature exactly in test client without careful json formatting.
-        # So we might skip signature verification in test or ensure we generate sig on the EXACT string.
+        # However, the view reads request.body.
+        # If we use client.post(..., data=payload, format='json'), request.body will be the JSON.
+        # BUT, there's a risk of mismatch in spacing.
+        # Safest way: send pre-encoded content.
         
-        # Let's bypass signature for unit test by mocking the verification logic? 
-        # Or just use Client(content_type='application/json') and manual signature.
+        response = self.client.post(
+            url, 
+            data=json_payload, 
+            content_type='application/json',
+            headers={'x-paystack-signature': signature}
+        )
         
-        # Simpler: We will mock the signature check pass in the view or settings?
-        # No, let's try to generate valid sig.
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         
-        # However, to be safe and quick, I will trust the view logic (standard HMAC) 
-        # and just focus on the logic AFTER signature.
-        # But if signature fails, test fails.
-        pass
+        # Verify transaction update
+        tx.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(tx.external_reference, 'ref_paystack_external')
+        self.assertEqual(tx.amount, 4900) # 5000 - 100
+        
+        # Verify wallet balance
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.balance, 4900)
+
+    def test_paystack_webhook_creates_new_transaction_if_no_match(self):
+        # Create user
+        wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        wallet.balance = 0
+        wallet.save()
+
+        url = reverse('paystack-webhook')
+        payload = {
+            "event": "charge.success",
+            "data": {
+                "id": 302962,
+                "reference": "ref_paystack_new",
+                "amount": 200000, # 2000 NGN
+                "fees": 5000, # 50 NGN
+                "customer": {
+                    "email": self.user.email,
+                }
+            }
+        }
+        
+        import json
+        import hmac
+        import hashlib
+        from django.conf import settings
+        
+        json_payload = json.dumps(payload).encode('utf-8')
+        signature = hmac.new(
+            key=settings.PAYSTACK_SECRET_KEY.encode('utf-8'),
+            msg=json_payload,
+            digestmod=hashlib.sha512
+        ).hexdigest()
+        
+        response = self.client.post(
+            url, 
+            data=json_payload, 
+            content_type='application/json',
+            headers={'x-paystack-signature': signature}
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify new transaction
+        tx = Transaction.objects.filter(external_reference='ref_paystack_new').first()
+        self.assertIsNotNone(tx)
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(tx.amount, 1950) # 2000 - 50
+        
+        # Verify wallet balance
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.balance, 1950)
 
     @patch('wallet.views.PaystackClient')
     def test_deposit_retry_on_missing_phone(self, MockPaystackClient):
@@ -410,6 +480,60 @@ class PaystackIntegrationTests(APITestCase):
         # Verify User model updated
         self.user.refresh_from_db()
         self.assertEqual(self.user.paystack_customer_code, new_code)
+
+    @patch('wallet.views.PaystackClient')
+    def test_verify_deposit_paystack_success(self, MockPaystackClient):
+        """
+        Test that VerifyDepositView correctly verifies a pending transaction
+        using PaystackClient.list_transactions.
+        """
+        # Setup mock
+        mock_client = MockPaystackClient.return_value
+        mock_client.list_transactions.return_value = {
+            'status': True,
+            'data': [
+                {
+                    'reference': 'paystack_ref_123',
+                    'amount': 500000, # 5000 NGN * 100
+                    'status': 'success'
+                }
+            ]
+        }
+
+        # Create Transaction
+        wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        # Ensure wallet empty
+        wallet.balance = 0
+        wallet.save()
+        
+        tx = Transaction.objects.create(
+            wallet=wallet,
+            title="Deposit",
+            amount=5000,
+            amount_ngn=5000,
+            transaction_type='DEPOSIT',
+            category='Deposit',
+            status='PENDING',
+            reference='ref_internal_pending',
+            payment_method='PAYSTACK',
+            payment_currency='NGN'
+        )
+
+        url = reverse('verify-deposit', args=[tx.reference])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify call
+        mock_client.list_transactions.assert_called_with(customer=self.user.email, status='success')
+        
+        # Verify DB updates
+        tx.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(tx.external_reference, 'paystack_ref_123')
+        
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.balance, 5000)
 
 def import_json_dumps(data):
     import json

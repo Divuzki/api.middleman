@@ -103,6 +103,22 @@ class PaystackClient:
         """
         return self._request('GET', f'/transaction/verify/{reference}')
 
+    def list_transactions(self, customer=None, status=None, amount=None, perPage=50):
+        """
+        List transactions.
+        """
+        payload = {
+            "perPage": perPage
+        }
+        if customer:
+            payload["customer"] = customer
+        if status:
+            payload["status"] = status
+        if amount:
+            payload["amount"] = amount
+            
+        return self._request('GET', '/transaction', payload)
+
 
 class NOWPaymentsClient:
     BASE_URL = "https://api.nowpayments.io/v1"
