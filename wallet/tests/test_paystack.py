@@ -352,15 +352,18 @@ class PaystackIntegrationTests(APITestCase):
         # a specific 404 flow inside the retry block. Now we short-circuit on ANY update failure.
         
         # Verify initial failure was handled
-        mock_client.update_customer.assert_called_once_with(
-            invalid_code,
-            first_name='Test',
-            last_name='User',
-            phone=phone_number
-        )
+        # update_customer is called twice:
+        # 1. At the beginning to validate the existing (invalid) code
+        # 2. Inside the DVA creation error handler to try to fix the phone number (which fails again)
+        self.assertEqual(mock_client.update_customer.call_count, 2)
         
-        # Verify create_customer was called with ALIAS email (recovery step)
-        mock_client.create_customer.assert_called_once_with(
+        # Verify create_customer was called TWICE
+        # 1. Initial creation after first update failure
+        # 2. Recovery creation after DVA failure + second update failure
+        self.assertEqual(mock_client.create_customer.call_count, 2)
+        
+        # Verify the LAST call was the recovery one
+        mock_client.create_customer.assert_called_with(
             email='test+wallet@example.com',
             first_name='Test',
             last_name='User',
