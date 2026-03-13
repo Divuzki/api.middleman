@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 # Fee Constants (2026)
 PAYSTACK_FEE_PERCENTAGE = 0.015  # 1.5%
+PAYSTACK_DVA_FEE_PERCENTAGE = 0.01  # 1%
+PAYSTACK_DVA_FEE_CAP = 300  # NGN 300
 NOWPAYMENTS_FEE_PERCENTAGE = 0.005  # 0.5%
 
 class PaystackClient:

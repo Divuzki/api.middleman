@@ -2,7 +2,7 @@ import logging
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
-from users.notifications import notify_balance_update
+from users.notifications import notify_balance_update, send_standard_notification
 from .models import Wallet, Transaction
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ class WalletEngine:
     """
 
     @staticmethod
-    def approve_transaction(transaction_id):
+    def approve_transaction(transaction_id, notification_title=None, notification_body=None):
         """
         Approves a transaction and updates the wallet balance atomically.
         """
@@ -52,6 +52,24 @@ class WalletEngine:
                     user = User.objects.get(pk=wallet.user_id)
                     # Use on_commit to ensure DB is updated before sending notification
                     transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
+
+                    # Send push notification for deposits
+                    if txn.transaction_type == 'DEPOSIT':
+                        title = notification_title or "Deposit Confirmed"
+                        
+                        # Format amount for default body if needed
+                        if wallet.currency == 'NGN':
+                            amount_fmt = f"₦{txn.amount:,.2f}"
+                        else:
+                            amount_fmt = f"{wallet.currency} {txn.amount:,.2f}"
+                            
+                        body = notification_body or f"Your wallet has been credited with {amount_fmt}."
+                        
+                        transaction.on_commit(
+                            lambda: send_standard_notification(user, title, body),
+                            using='wallet_db'
+                        )
+
                 except User.DoesNotExist:
                     logger.warning(f"User {wallet.user_id} not found for wallet {wallet.pk}, skipping notification")
 

@@ -26,7 +26,9 @@ from .utils import (
     NOWPaymentsClient, 
     verify_nowpayments_signature,
     PAYSTACK_FEE_PERCENTAGE,
-    NOWPAYMENTS_FEE_PERCENTAGE
+    PAYSTACK_DVA_FEE_PERCENTAGE,
+    PAYSTACK_DVA_FEE_CAP,
+    NOWPAYMENTS_FEE_PERCENTAGE,
 )
 from middleman_api.utils import StandardResponse, get_converted_amounts
 from middleman_api.exceptions import GatewayError
@@ -63,6 +65,37 @@ class DepositView(APIView):
                 if currency == 'NGN':
                     # Generate Reference
                     ref = f"ref_{uuid.uuid4().hex[:12]}"
+
+                    # Calculate Fee and Total Charged for DVA (Merchant absorbs fee usually, but here we show what user needs to pay to get 'amount')
+                    # Logic: If user wants to wallet to be credited with X, how much should they transfer?
+                    # DVA Fee is 1% capped at 300.
+                    # Case 1: Fee < 300. 
+                    # Total * 0.01 = Fee. Total - Fee = Amount.
+                    # Total - 0.01*Total = Amount => Total * 0.99 = Amount => Total = Amount / 0.99
+                    # Threshold: 300 / 0.01 = 30,000 Total. (Amount = 29,700)
+                    
+                    dva_fee = 0
+                    total_charged = float(amount)
+                    
+                    # Threshold for cap (when 1% of total equals 300)
+                    # 0.01 * X = 300 => X = 30000. 
+                    # If total is 30000, net is 29700.
+                    
+                    if float(amount) <= 29700:
+                        total_charged = float(amount) / (1 - PAYSTACK_DVA_FEE_PERCENTAGE)
+                        dva_fee = total_charged - float(amount)
+                    else:
+                        dva_fee = PAYSTACK_DVA_FEE_CAP
+                        total_charged = float(amount) + dva_fee
+
+                    # Rounding
+                    dva_fee = round(dva_fee, 2)
+                    total_charged = round(total_charged, 2)
+
+                    response_data.update({
+                        "fee": dva_fee,
+                        "total_charged": total_charged
+                    })
 
                     # Create Pending Transaction
                     Transaction.objects.create(
@@ -495,6 +528,27 @@ class PaystackWebhookView(APIView):
             net_amount_kobo = amount_kobo - fees_kobo
             net_amount_ngn = net_amount_kobo / 100.0
             
+            # Extract Authorization details for DVA and Notification
+            authorization = data.get('authorization', {})
+            channel = data.get('channel')
+            receiver_account = authorization.get('receiver_bank_account_number')
+            
+            # Prepare notification details
+            notification_title = None
+            notification_body = None
+            
+            if channel == 'dedicated_nuban':
+                sender_name = authorization.get('sender_name', 'Someone')
+                sender_bank = authorization.get('sender_bank', 'Bank')
+                
+                # Format amount
+                # Since we don't have wallet object yet, we can't check currency, 
+                # but Paystack DVA is typically NGN.
+                amount_fmt = f"₦{net_amount_ngn:,.2f}"
+                
+                notification_title = f"{sender_name} sent {amount_fmt} to your wallet"
+                notification_body = f"Transfer from {sender_bank}. Reference: {reference}"
+
             # Idempotency check
             if Transaction.objects.filter(external_reference=reference).exists():
                 return Response(status=status.HTTP_200_OK)
@@ -512,31 +566,42 @@ class PaystackWebhookView(APIView):
                 # The user said "calculate net amount and use that".
                 tx.amount = net_amount_ngn
                 tx.amount_ngn = net_amount_ngn
-                # Update external reference if not set (though here reference IS the reference)
-                # Actually if reference==reference, then external_reference might be something else or empty.
-                # Paystack reference is usually different from ours unless we set it. 
-                # If 'reference' in data is OUR reference, then Paystack's own reference is usually in `id` or another field?
-                # Paystack documentation says `reference` is the merchant reference. `id` is Paystack ID.
-                # So if data.reference matches tx.reference, it is the same transaction.
                 
+                # Update description if DVA info available
+                if notification_body:
+                    tx.description = notification_body
+                    
                 # Let's just update and approve.
                 tx.save()
-                WalletEngine.approve_transaction(tx.pk)
+                WalletEngine.approve_transaction(
+                    tx.pk, 
+                    notification_title=notification_title, 
+                    notification_body=notification_body
+                )
                 return Response(status=status.HTTP_200_OK)
 
             email = data.get('customer', {}).get('email')
             
             try:
                 # Find User
-                user = User.objects.filter(email=email).first()
+                user = None
+                
+                # Priority 1: DVA Account Number
+                if receiver_account:
+                    user = User.objects.filter(virtual_account_number=receiver_account).first()
+
+                # Priority 2: Email
                 if not user:
-                    # Try by customer code
+                    user = User.objects.filter(email=email).first()
+                
+                # Priority 3: Customer Code
+                if not user:
                     customer_code = data.get('customer', {}).get('customer_code')
                     if customer_code:
                          user = User.objects.filter(paystack_customer_code=customer_code).first()
                 
                 if not user:
-                    logger.error(f"Paystack Webhook: User not found for email {email}")
+                    logger.error(f"Paystack Webhook: User not found for email {email} or DVA {receiver_account}")
                     return Response(status=status.HTTP_200_OK)
 
                 wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
@@ -566,9 +631,15 @@ class PaystackWebhookView(APIView):
                     pending_tx.external_reference = reference
                     pending_tx.amount = net_amount_ngn
                     pending_tx.amount_ngn = net_amount_ngn
+                    if notification_body:
+                        pending_tx.description = notification_body
                     pending_tx.save()
                     
-                    WalletEngine.approve_transaction(pending_tx.pk)
+                    WalletEngine.approve_transaction(
+                        pending_tx.pk,
+                        notification_title=notification_title,
+                        notification_body=notification_body
+                    )
                     
                 else:
                     # Create new transaction
@@ -590,10 +661,14 @@ class PaystackWebhookView(APIView):
                         external_reference=reference,
                         payment_method='PAYSTACK',
                         payment_currency='NGN',
-                        description="Deposit via Paystack Webhook"
+                        description=notification_body or "Deposit via Paystack Webhook"
                     )
                     
-                    WalletEngine.approve_transaction(tx.pk)
+                    WalletEngine.approve_transaction(
+                        tx.pk,
+                        notification_title=notification_title,
+                        notification_body=notification_body
+                    )
                 
             except Exception as e:
                 logger.error(f"Paystack Webhook Error: {e}")
