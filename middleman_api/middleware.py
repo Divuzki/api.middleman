@@ -14,9 +14,9 @@ class RequestLoggingMiddleware:
         method = request.method
         path = request.path
         
-        print(f"Request: {method} {path} - Origin: {origin}")
-        print(f"Request Host: {host}")
-        print(f"Request User-Agent: {user_agent}")
+        # print(f"Request: {method} {path} - Origin: {origin}")
+        # print(f"Request Host: {host}")
+        # print(f"Request User-Agent: {user_agent}")
         
         # Also log to standard logger if configured
         logger.info(f"Incoming Request - Method: {method}, Path: {path}, Origin: {origin}, Host: {host}, User-Agent: {user_agent}")
@@ -24,7 +24,7 @@ class RequestLoggingMiddleware:
         response = self.get_response(request)
         
         # Log response status
-        print(f"Response Status: {response.status_code}")
+        # print(f"Response Status: {response.status_code}")
         logger.info(f"Response Status: {response.status_code}")
         
         return response

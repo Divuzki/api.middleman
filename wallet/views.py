@@ -520,6 +520,7 @@ class PaystackWebhookView(APIView):
         data = request.data.get('data', {})
         
         if event == 'charge.success':
+            print(request.data)
             reference = data.get('reference')
             amount_kobo = data.get('amount', 0)
             fees_kobo = data.get('fees', 0)
