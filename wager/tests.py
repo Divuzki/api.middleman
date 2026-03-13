@@ -5,6 +5,8 @@ from .services import WagerService
 from decimal import Decimal
 from wallet.models import Wallet
 from django.utils import timezone
+from unittest.mock import patch
+import datetime
 
 User = get_user_model()
 
@@ -61,3 +63,73 @@ class WagerDisputeTests(TestCase):
         self.wager.save()
         with self.assertRaisesRegex(ValueError, "matched or completed"):
             WagerService.dispute_wager(self.creator, self.wager)
+
+class WagerNotificationTests(TestCase):
+    databases = '__all__'
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='test_notif@example.com',
+            password='password123'
+        )
+        self.user.set_transaction_pin('1234')
+        self.user.save()
+        
+        # Wallet is created by signal, ensure it has funds
+        self.wallet = Wallet.objects.get(user_id=self.user.id)
+        self.wallet.balance = Decimal('50000.00')
+        self.wallet.save()
+
+        self.wager_data = {
+            'title': 'Test Wager',
+            'amount': 1000,
+            'currency': 'NGN',
+            'description': 'Test',
+            'category': 'Gaming',
+            'mode': 'Head-2-Head',
+            'proofMethod': 'Mutual confirmation',
+            'endDate': timezone.now() + datetime.timedelta(days=1),
+            'pin': '1234'
+        }
+
+    @patch('wager.services.notify_balance_update')
+    def test_create_wager_notification(self, mock_notify):
+        WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        mock_notify.assert_called()
+        # Verify it was called with the user
+        args, _ = mock_notify.call_args
+        self.assertEqual(args[0].id, self.user.id)
+
+    @patch('wager.services.notify_balance_update')
+    def test_join_wager_notification(self, mock_notify):
+        # Create opponent
+        opponent = User.objects.create_user(email='opp_notif@example.com', password='password123')
+        opponent.set_transaction_pin('1234')
+        opponent.save()
+        opp_wallet = Wallet.objects.get(user_id=opponent.id)
+        opp_wallet.balance = Decimal('50000.00')
+        opp_wallet.save()
+
+        # Create wager (by self.user)
+        wager = WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        
+        # Reset mock to clear the create call
+        mock_notify.reset_mock()
+
+        # Join wager (by opponent)
+        WagerService.join_wager(opponent, wager, pin='1234')
+        
+        mock_notify.assert_called()
+        args, _ = mock_notify.call_args
+        self.assertEqual(args[0].id, opponent.id)
+
+    @patch('wager.services.notify_balance_update')
+    def test_cancel_wager_notification(self, mock_notify):
+        wager = WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        mock_notify.reset_mock()
+
+        WagerService.cancel_wager(self.user, wager)
+        
+        mock_notify.assert_called()
+        args, _ = mock_notify.call_args
+        self.assertEqual(args[0].id, self.user.id)

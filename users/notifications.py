@@ -105,13 +105,18 @@ def notify_balance_update(user):
         return
 
     channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
-        f'user_{user.id}',
-        {
-            'type': 'balance_update',
-            'data': data
-        }
-    )
+    group_name = f'user_{user.id}'
+    try:
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            {
+                'type': 'balance_update',
+                'data': data
+            }
+        )
+        print(f"Notification sent to group {group_name}: {data}")
+    except Exception as e:
+        print(f"Failed to send notification to group {group_name}: {e}")
 
 def notify_badge_counts(user):
     data = get_badge_counts_data(user)

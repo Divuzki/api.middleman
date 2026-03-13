@@ -3,6 +3,7 @@ from django.db import transaction
 from django.utils import timezone
 from .models import Agreement, AgreementOffer, ChatMessage
 from wallet.models import Wallet, Transaction
+from users.notifications import notify_balance_update
 from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
 
@@ -91,6 +92,9 @@ class AgreementService:
                         payment_currency=agreement.currency
                     )
                     
+                    # Notify buyer of balance update (Debit)
+                    notify_balance_update(user)
+                    
                     # Update Agreement (using locked instance)
                     # Note: We keep agreement amounts in original currency/values
                     # But we might want to update USD/NGN values based on current rates
@@ -160,6 +164,9 @@ class AgreementService:
                 description=f"Funds released for agreement {agreement.id}",
                 payment_currency=agreement.currency
             )
+            
+            # Notify seller of balance update (Credit)
+            notify_balance_update(agreement.seller)
             
             agreement.status = 'completed'
             agreement.completed_at = timezone.now()

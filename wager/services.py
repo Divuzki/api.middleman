@@ -1,9 +1,13 @@
 
 from django.db import transaction
 from decimal import Decimal
+from django.contrib.auth import get_user_model
 from .models import Wager, ChatMessage
 from wallet.models import Wallet, Transaction
+from users.notifications import notify_balance_update
 from .serializers import WagerSerializer
+
+User = get_user_model()
 from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
 
@@ -56,6 +60,9 @@ class WagerService:
                 description="Stake for wager creation",
                 payment_currency=wager_currency  # Log the original wager currency
             )
+            
+            # Notify user of balance update (Debit)
+            notify_balance_update(user)
 
         if 'pin' in wager_data:
             del wager_data['pin']
@@ -89,6 +96,9 @@ class WagerService:
                     description="Reversal for failed wager creation",
                     payment_currency=wager_currency
                 )
+                
+                # Notify user of balance update (Reversal)
+                notify_balance_update(user)
             raise
 
     @staticmethod
@@ -171,6 +181,9 @@ class WagerService:
                 description=f"Refund for cancelled wager {wager.id}",
                 payment_currency=wager_currency
             )
+            
+            # Notify user of balance update (Refund)
+            notify_balance_update(user)
 
         # 3. Update Wager
         try:
@@ -211,6 +224,9 @@ class WagerService:
                     description=f"Reversal for failed wager cancel {wager.id}",
                     payment_currency=wager_currency
                 )
+                
+                # Notify user of balance update (Reversal)
+                notify_balance_update(user)
             raise
             
     @staticmethod
@@ -261,6 +277,13 @@ class WagerService:
                 payment_currency=wager_currency
             )
             
+            # Notify creator
+            try:
+                creator = User.objects.get(id=wager.creator_id)
+                notify_balance_update(creator)
+            except Exception as e:
+                pass
+
             # Refund Opponent
             if wager.opponent_id:
                 opponent_wallet = Wallet.objects.select_for_update().get(user_id=wager.opponent_id)
@@ -284,8 +307,15 @@ class WagerService:
                     status='SUCCESSFUL',
                     reference=f"draw_refund_opponent_{wager.id}_{uuid.uuid4().hex[:8]}",
                     description=f"Refund for drawn wager {wager.id}",
-                    payment_currency=wager_currency
-                )
+                payment_currency=wager_currency
+            )
+            
+            # Notify opponent
+            try:
+                opponent = User.objects.get(id=wager.opponent_id)
+                notify_balance_update(opponent)
+            except Exception as e:
+                pass
 
         # 3. Update Wager
         try:
@@ -397,6 +427,9 @@ class WagerService:
                 description=f"Stake for joining wager {wager.id}",
                 payment_currency=wager_currency
             )
+            
+            # Notify user of balance update (Debit)
+            notify_balance_update(user)
 
         try:
             with transaction.atomic(using='wager_db'):
@@ -437,4 +470,7 @@ class WagerService:
                     description=f"Reversal for failed wager join {wager.id}",
                     payment_currency=wager_currency
                 )
+                
+                # Notify user of balance update (Reversal)
+                notify_balance_update(user)
             raise

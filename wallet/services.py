@@ -50,7 +50,8 @@ class WalletEngine:
                 User = get_user_model()
                 try:
                     user = User.objects.get(pk=wallet.user_id)
-                    notify_balance_update(user)
+                    # Use on_commit to ensure DB is updated before sending notification
+                    transaction.on_commit(lambda: notify_balance_update(user))
                 except User.DoesNotExist:
                     logger.warning(f"User {wallet.user_id} not found for wallet {wallet.pk}, skipping notification")
 
