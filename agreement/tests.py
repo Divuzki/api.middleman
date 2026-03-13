@@ -453,7 +453,8 @@ class AgreementNotificationTests(TestCase):
         from agreement.services import AgreementService
         
         # Buyer accepts offer -> Debit -> Notification
-        AgreementService.accept_offer(self.buyer, self.agreement, self.offer, pin='1234')
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            AgreementService.accept_offer(self.buyer, self.agreement, self.offer, pin='1234')
         
         mock_notify.assert_called()
         args, _ = mock_notify.call_args
@@ -469,7 +470,8 @@ class AgreementNotificationTests(TestCase):
         self.agreement.save()
         
         # Buyer confirms -> Seller Credit -> Notification
-        AgreementService.confirm_agreement(self.buyer, self.agreement)
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            AgreementService.confirm_agreement(self.buyer, self.agreement)
         
         mock_notify.assert_called()
         args, _ = mock_notify.call_args

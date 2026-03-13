@@ -94,7 +94,10 @@ class WagerNotificationTests(TestCase):
 
     @patch('wager.services.notify_balance_update')
     def test_create_wager_notification(self, mock_notify):
-        WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        # We need to capture on_commit callbacks
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        
         mock_notify.assert_called()
         # Verify it was called with the user
         args, _ = mock_notify.call_args
@@ -111,13 +114,16 @@ class WagerNotificationTests(TestCase):
         opp_wallet.save()
 
         # Create wager (by self.user)
-        wager = WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        # We need to capture on_commit callbacks
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            wager = WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
         
         # Reset mock to clear the create call
         mock_notify.reset_mock()
 
         # Join wager (by opponent)
-        WagerService.join_wager(opponent, wager, pin='1234')
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            WagerService.join_wager(opponent, wager, pin='1234')
         
         mock_notify.assert_called()
         args, _ = mock_notify.call_args
@@ -125,10 +131,12 @@ class WagerNotificationTests(TestCase):
 
     @patch('wager.services.notify_balance_update')
     def test_cancel_wager_notification(self, mock_notify):
-        wager = WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            wager = WagerService.create_wager(self.user, self.wager_data.copy(), pin='1234')
         mock_notify.reset_mock()
 
-        WagerService.cancel_wager(self.user, wager)
+        with self.captureOnCommitCallbacks(using='wallet_db', execute=True):
+            WagerService.cancel_wager(self.user, wager)
         
         mock_notify.assert_called()
         args, _ = mock_notify.call_args

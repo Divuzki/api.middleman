@@ -93,7 +93,7 @@ class AgreementService:
                     )
                     
                     # Notify buyer of balance update (Debit)
-                    notify_balance_update(user)
+                    transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
                     
                     # Update Agreement (using locked instance)
                     # Note: We keep agreement amounts in original currency/values
@@ -166,7 +166,7 @@ class AgreementService:
             )
             
             # Notify seller of balance update (Credit)
-            notify_balance_update(agreement.seller)
+            transaction.on_commit(lambda: notify_balance_update(agreement.seller), using='wallet_db')
             
             agreement.status = 'completed'
             agreement.completed_at = timezone.now()

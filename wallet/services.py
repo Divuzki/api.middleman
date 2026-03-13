@@ -19,7 +19,7 @@ class WalletEngine:
         Approves a transaction and updates the wallet balance atomically.
         """
         try:
-            with transaction.atomic():
+            with transaction.atomic(using='wallet_db'):
                 # Lock the transaction row
                 try:
                     txn = Transaction.objects.select_for_update().get(pk=transaction_id)
@@ -51,7 +51,7 @@ class WalletEngine:
                 try:
                     user = User.objects.get(pk=wallet.user_id)
                     # Use on_commit to ensure DB is updated before sending notification
-                    transaction.on_commit(lambda: notify_balance_update(user))
+                    transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
                 except User.DoesNotExist:
                     logger.warning(f"User {wallet.user_id} not found for wallet {wallet.pk}, skipping notification")
 

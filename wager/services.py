@@ -62,7 +62,7 @@ class WagerService:
             )
             
             # Notify user of balance update (Debit)
-            notify_balance_update(user)
+            transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
 
         if 'pin' in wager_data:
             del wager_data['pin']
@@ -98,7 +98,7 @@ class WagerService:
                 )
                 
                 # Notify user of balance update (Reversal)
-                notify_balance_update(user)
+                transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
             raise
 
     @staticmethod
@@ -183,7 +183,7 @@ class WagerService:
             )
             
             # Notify user of balance update (Refund)
-            notify_balance_update(user)
+            transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
 
         # 3. Update Wager
         try:
@@ -226,7 +226,7 @@ class WagerService:
                 )
                 
                 # Notify user of balance update (Reversal)
-                notify_balance_update(user)
+                transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
             raise
             
     @staticmethod
@@ -280,7 +280,7 @@ class WagerService:
             # Notify creator
             try:
                 creator = User.objects.get(id=wager.creator_id)
-                notify_balance_update(creator)
+                transaction.on_commit(lambda: notify_balance_update(creator), using='wallet_db')
             except Exception as e:
                 pass
 
@@ -313,7 +313,7 @@ class WagerService:
             # Notify opponent
             try:
                 opponent = User.objects.get(id=wager.opponent_id)
-                notify_balance_update(opponent)
+                transaction.on_commit(lambda: notify_balance_update(opponent), using='wallet_db')
             except Exception as e:
                 pass
 
@@ -429,7 +429,7 @@ class WagerService:
             )
             
             # Notify user of balance update (Debit)
-            notify_balance_update(user)
+            transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
 
         try:
             with transaction.atomic(using='wager_db'):
@@ -472,5 +472,5 @@ class WagerService:
                 )
                 
                 # Notify user of balance update (Reversal)
-                notify_balance_update(user)
+                transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
             raise
