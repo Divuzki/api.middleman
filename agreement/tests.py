@@ -89,7 +89,7 @@ class AgreementTests(TestCase):
         
         # Check initial offer
         self.assertIsNotNone(response_data.get('initialOffer'))
-        self.assertEqual(response_data['initialOffer']['amount'], 50000)
+        self.assertEqual(float(response_data['initialOffer']['amount']), 50000.0)
         self.assertEqual(response_data['initialOffer']['timeline'], '3 days')
         
         agreement = Agreement.objects.get(id=response_data['id'])
@@ -172,7 +172,7 @@ class AgreementTests(TestCase):
         
         # Verify wallet debit
         self.assertEqual(float(buyer_wallet.balance), 400.00) # 500 - 100
-        self.assertTrue(Transaction.objects.filter(wallet=buyer_wallet, amount=100, transaction_type='TRANSFER').exists())
+        self.assertTrue(Transaction.objects.filter(wallet=buyer_wallet, amount=100, transaction_type='AGREEMENT_PAYMENT').exists())
 
     def test_complete_agreement(self):
         agreement = Agreement.objects.create(
@@ -222,7 +222,7 @@ class AgreementTests(TestCase):
         
         # Verify seller credit
         self.assertEqual(float(seller_wallet.balance), 100.00)
-        self.assertTrue(Transaction.objects.filter(wallet=seller_wallet, amount=100, transaction_type='TRANSFER').exists())
+        self.assertTrue(Transaction.objects.filter(wallet=seller_wallet, amount=100, transaction_type='AGREEMENT_PAYOUT').exists())
 
     def test_reject_offer(self):
         agreement = Agreement.objects.create(
@@ -410,3 +410,67 @@ class WebSocketTests(TestCase):
         self.assertEqual(float(seller_wallet.balance), 1000.0)
         
         await communicator.disconnect()
+
+class AgreementNotificationTests(TestCase):
+    databases = {'default', 'agreement_db', 'wallet_db', 'wager_db'}
+
+    def setUp(self):
+        self.buyer = User.objects.create_user(
+            email='buyer_notif@test.com', 
+            password='password123'
+        )
+        self.buyer.transaction_pin = make_password('1234')
+        self.buyer.save()
+
+        self.seller = User.objects.create_user(
+            email='seller_notif@test.com', 
+            password='password123'
+        )
+        
+        # Setup Wallets
+        Wallet.objects.filter(user_id=self.buyer.id).update(balance=1000.00)
+        
+        self.agreement = Agreement.objects.create(
+            title='Notif Agreement',
+            description='Test',
+            initiator=self.buyer,
+            buyer=self.buyer,
+            seller=self.seller,
+            creator_role='buyer',
+            status='awaiting_acceptance'
+        )
+        
+        self.offer = AgreementOffer.objects.create(
+            agreement=self.agreement,
+            amount=500.00,
+            description='Offer',
+            timeline='1d',
+            status='pending'
+        )
+
+    @patch('agreement.services.notify_balance_update')
+    def test_accept_offer_notification(self, mock_notify):
+        from agreement.services import AgreementService
+        
+        # Buyer accepts offer -> Debit -> Notification
+        AgreementService.accept_offer(self.buyer, self.agreement, self.offer, pin='1234')
+        
+        mock_notify.assert_called()
+        args, _ = mock_notify.call_args
+        self.assertEqual(args[0].id, self.buyer.id)
+
+    @patch('agreement.services.notify_balance_update')
+    def test_confirm_agreement_notification(self, mock_notify):
+        from agreement.services import AgreementService
+        
+        # Setup as delivered
+        self.agreement.status = 'delivered'
+        self.agreement.amount = 500.00
+        self.agreement.save()
+        
+        # Buyer confirms -> Seller Credit -> Notification
+        AgreementService.confirm_agreement(self.buyer, self.agreement)
+        
+        mock_notify.assert_called()
+        args, _ = mock_notify.call_args
+        self.assertEqual(args[0].id, self.seller.id)
