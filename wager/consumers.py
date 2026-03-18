@@ -133,12 +133,61 @@ class WagerConsumer(AsyncWebsocketConsumer):
                 return
 
             # Send FCM
-            # Construct Deep Link Payload
+            # Base Payload
             message_payload = {
                 "type": event_type.upper(),
                 "url": f"/app/wager/{self.wager_id}",
                 "wagerId": str(self.wager_id)
             }
+
+            # Default Configs
+            android_config = messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    icon="ic_notification",
+                    channel_id="default"
+                )
+            )
+            apns_config = None
+
+            # Special Handling for Chat Messages (Native Style)
+            if event_type == 'chat_message':
+                conversation_id = str(self.wager_id)
+                
+                # Update payload to match spec
+                message_payload.update({
+                    "type": "wager",
+                    "conversationId": conversation_id,
+                    "senderName": payload.get('senderName', 'Unknown'),
+                    "senderId": str(payload.get('senderId', '')),
+                    "senderAvatar": str(payload.get('senderAvatar', '')),
+                    "timestamp": str(payload.get('timestamp', '')),
+                })
+                
+                # Android: MessagingStyle via click_action/tag
+                android_config = messaging.AndroidConfig(
+                    priority="high",
+                    notification=messaging.AndroidNotification(
+                        icon="ic_notification",
+                        channel_id="default",
+                        click_action="CHAT_MSG",
+                        tag=conversation_id
+                    )
+                )
+                
+                # iOS: Category for input
+                apns_config = messaging.APNSConfig(
+                    payload=messaging.APNSPayload(
+                        aps=messaging.Aps(
+                            category="CHAT_MSG",
+                            thread_id=conversation_id,
+                            sound="default"
+                        )
+                    )
+                )
+
+            # Ensure all data values are strings
+            message_payload = {k: str(v) for k, v in message_payload.items()}
             
             for recipient in recipients:
                 devices = DeviceProfile.objects.filter(user=recipient, is_active=True, fcm_device__isnull=False)
@@ -150,13 +199,8 @@ class WagerConsumer(AsyncWebsocketConsumer):
                                 title=title,
                                 body=body,
                             ),
-                            android=messaging.AndroidConfig(
-                                priority="high",
-                                notification=messaging.AndroidNotification(
-                                    icon="ic_notification",
-                                    channel_id="default"
-                                )
-                             ),
+                            android=android_config,
+                            apns=apns_config,
                             data=message_payload
                         )
                         messaging.send(message)

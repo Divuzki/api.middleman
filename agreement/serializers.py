@@ -27,13 +27,14 @@ class AgreementOfferSerializer(serializers.ModelSerializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
     senderName = serializers.SerializerMethodField()
+    senderAvatar = serializers.CharField(source='sender.image_url', read_only=True)
     offer = AgreementOfferSerializer(read_only=True)
     type = serializers.CharField(source='message_type')
     # Use 'text' directly as per model, which matches spec
 
     class Meta:
         model = ChatMessage
-        fields = ['id', 'senderId', 'senderName', 'text', 'type', 'offer', 'timestamp']
+        fields = ['id', 'senderId', 'senderName', 'senderAvatar', 'text', 'type', 'offer', 'timestamp']
 
     def get_senderName(self, obj):
         return f"{obj.sender.first_name} {obj.sender.last_name}".strip() or obj.sender.email

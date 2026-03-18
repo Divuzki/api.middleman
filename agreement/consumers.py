@@ -83,6 +83,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             'text': serialized_message['text'],
             'senderId': serialized_message['senderId'],
             'senderName': serialized_message['senderName'],
+            'senderAvatar': serialized_message.get('senderAvatar', ''),
             'timestamp': serialized_message['timestamp']
         }
 
@@ -128,6 +129,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             'offer': offer_dict,
             'senderId': serialized_message['senderId'],
             'senderName': serialized_message['senderName'],
+            'senderAvatar': serialized_message.get('senderAvatar', ''),
             'timestamp': serialized_message['timestamp']
         }
         
@@ -351,6 +353,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     "conversationId": conversation_id,
                     "senderName": payload.get('senderName', 'Unknown'),
                     "senderId": str(payload.get('senderId', '')),
+                    "senderAvatar": str(payload.get('senderAvatar', '')),
                     "timestamp": str(payload.get('timestamp', '')),
                 })
                 
@@ -375,6 +378,9 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                         )
                     )
                 )
+
+            # Ensure all data values are strings
+            message_payload = {k: str(v) for k, v in message_payload.items()}
 
             # Batch send is tricky with fcm-django 2.x/3.x vs firebase-admin direct
             # We will iterate and send for simplicity and robustness with fcm-django

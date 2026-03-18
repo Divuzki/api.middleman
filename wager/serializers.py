@@ -78,11 +78,12 @@ class WagerSerializer(serializers.ModelSerializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
     senderName = serializers.SerializerMethodField()
+    senderAvatar = serializers.CharField(source='sender.image_url', read_only=True)
     type = serializers.CharField(source='message_type', read_only=True)
 
     class Meta:
         model = ChatMessage
-        fields = ['id', 'senderId', 'senderName', 'text', 'type', 'timestamp']
+        fields = ['id', 'senderId', 'senderName', 'senderAvatar', 'text', 'type', 'timestamp']
         read_only_fields = ['id', 'senderId', 'senderName', 'type', 'timestamp']
 
     def get_senderName(self, obj):
