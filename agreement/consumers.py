@@ -324,13 +324,58 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 return
 
             # Send FCM
-            # Construct Deep Link Payload
+            # Default Payload
             message_payload = {
                 "type": event_type.upper(),
                 "url": f"/app/agreement/{self.agreement_id}",
                 "agreementId": str(self.agreement_id)
             }
             
+            # Configs
+            android_config = messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    icon="ic_notification",
+                    channel_id="default"
+                )
+            )
+            apns_config = None
+
+            # Special Handling for Chat Messages (Native Style)
+            if event_type == 'chat_message':
+                conversation_id = str(self.agreement_id)
+                
+                # Update payload to match spec
+                message_payload.update({
+                    "type": "agreement",
+                    "conversationId": conversation_id,
+                    "senderName": payload.get('senderName', 'Unknown'),
+                    "senderId": str(payload.get('senderId', '')),
+                    "timestamp": str(payload.get('timestamp', '')),
+                })
+                
+                # Android: MessagingStyle via click_action/tag
+                android_config = messaging.AndroidConfig(
+                    priority="high",
+                    notification=messaging.AndroidNotification(
+                        icon="ic_notification",
+                        channel_id="default",
+                        click_action="CHAT_MSG",
+                        tag=conversation_id
+                    )
+                )
+                
+                # iOS: Category for input
+                apns_config = messaging.APNSConfig(
+                    payload=messaging.APNSPayload(
+                        aps=messaging.Aps(
+                            category="CHAT_MSG",
+                            thread_id=conversation_id,
+                            sound="default"
+                        )
+                    )
+                )
+
             # Batch send is tricky with fcm-django 2.x/3.x vs firebase-admin direct
             # We will iterate and send for simplicity and robustness with fcm-django
             for recipient in recipients:
@@ -338,21 +383,14 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                 for device_profile in devices:
                     try:
                         # Using firebase_admin directly for more control over payload structure
-                        # device_profile.fcm_device.send_message(...) wrapper might limit us
-                        
                         message = messaging.Message(
                             token=device_profile.fcm_device.registration_id,
                             notification=messaging.Notification(
                                 title=title,
                                 body=body,
                             ),
-                            android=messaging.AndroidConfig(
-                                priority="high",
-                                notification=messaging.AndroidNotification(
-                                    icon="ic_notification",
-                                    channel_id="default"
-                                )
-                             ),
+                            android=android_config,
+                            apns=apns_config,
                             data=message_payload
                         )
                         messaging.send(message)
