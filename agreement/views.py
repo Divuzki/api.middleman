@@ -26,6 +26,15 @@ class AgreementViewSet(viewsets.ModelViewSet):
         # So we do this:
         agreement = serializer.save()
         
+        user_name = self.request.user.first_name or self.request.user.email.split('@')[0]
+        msg = ChatMessage.objects.create(
+            agreement=agreement,
+            sender=self.request.user,
+            text=f"{user_name} created agreement",
+            message_type='system'
+        )
+        self._notify_chat_message(msg)
+        
         # Check if seller provided initial offer details
         creator_role = self.request.data.get('creatorRole')
         # Amount and timeline might be strings or numbers
@@ -71,11 +80,12 @@ class AgreementViewSet(viewsets.ModelViewSet):
         user = request.user
 
         try:
-            agreement = AgreementService.join_agreement(user, agreement)
+            agreement, msg = AgreementService.join_agreement(user, agreement)
         except ValueError as e:
             raise ValidationError(str(e))
         
         self._notify_agreement_update(agreement)
+        self._notify_chat_message(msg)
         
         # Notify participants of status change
         notify_badge_counts(agreement.initiator)
@@ -96,7 +106,12 @@ class AgreementViewSet(viewsets.ModelViewSet):
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
         try:
-            agreement, offer = AgreementService.accept_offer(user, agreement, offer, pin)
+            result = AgreementService.accept_offer(user, agreement, offer, pin)
+            if len(result) == 3:
+                agreement, offer, msg = result
+            else:
+                agreement, offer = result
+                msg = None
         except ValueError as e:
              raise ValidationError(str(e))
         except Exception as e:
@@ -105,6 +120,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
         # Notify via WebSocket
         self._notify_agreement_update(agreement)
         self._notify_offer_update(offer)
+        if msg:
+            self._notify_chat_message(msg)
         
         # Balance Update for Buyer
         if user == agreement.buyer:
@@ -148,7 +165,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         proof = request.data.get('proof', [])
         
         try:
-            agreement = AgreementService.deliver_agreement(request.user, agreement, proof)
+            agreement, msg = AgreementService.deliver_agreement(request.user, agreement, proof)
         except ValueError as e:
              if "Only seller" in str(e):
                  raise PermissionDenied(str(e))
@@ -156,6 +173,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
                  raise ValidationError(str(e))
         
         self._notify_agreement_update(agreement)
+        self._notify_chat_message(msg)
         
         notify_badge_counts(agreement.buyer) # Buyer needs to confirm now
         notify_badge_counts(agreement.seller)
@@ -314,7 +332,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         agreement = self.get_object()
         
         try:
-            agreement = AgreementService.confirm_agreement(request.user, agreement)
+            agreement, msg = AgreementService.confirm_agreement(request.user, agreement)
         except ValueError as e:
             if "Only buyer" in str(e):
                 raise PermissionDenied(str(e))
@@ -324,6 +342,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
              raise APIException(f"Transaction failed: {str(e)}")
 
         self._notify_agreement_update(agreement)
+        self._notify_chat_message(msg)
 
         notify_balance_update(agreement.seller) # Funds released
         notify_badge_counts(agreement.buyer)

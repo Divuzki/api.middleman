@@ -45,6 +45,8 @@ class AgreementSerializer(serializers.ModelSerializer):
     sellerId = serializers.CharField(source='seller.firebase_uid', read_only=True)
     activeOfferId = serializers.CharField(source='active_offer.id', read_only=True)
     creatorRole = serializers.CharField(source='creator_role')
+    agreementType = serializers.CharField(source='agreement_type')
+    feePayer = serializers.CharField(source='fee_payer')
     shareLink = serializers.URLField(source='share_link', read_only=True)
     termsLockedAt = serializers.DateTimeField(source='terms_locked_at', read_only=True)
     securedAt = serializers.DateTimeField(source='secured_at', read_only=True)
@@ -62,7 +64,7 @@ class AgreementSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'amount', 'amount_usd', 'amount_ngn', 'currency', 'status', 
             'timeline', 'initiator', 'counterparty', 'buyerId', 'sellerId', 
-            'creatorRole', 'terms', 'shareLink', 'date', 
+            'creatorRole', 'agreementType', 'feePayer', 'terms', 'shareLink', 'date', 
             'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt', 'deliveryProof',
             'initialOffer', 'activeOfferId', 'deliveryTimeline'
         ]

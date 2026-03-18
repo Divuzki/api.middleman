@@ -52,6 +52,18 @@ class Agreement(models.Model):
 
     creator_role = models.CharField(max_length=10, choices=[('buyer', 'Buyer'), ('seller', 'Seller')])
     
+    agreement_type = models.CharField(max_length=20, choices=[
+        ('buy_sell', 'Buy/Sell'),
+        ('service', 'Service'),
+        ('custom', 'Custom'),
+    ], default='custom')
+    
+    fee_payer = models.CharField(max_length=10, choices=[
+        ('me', 'Me'),
+        ('other', 'Other'),
+        ('split', 'Split'),
+    ], default='split')
+    
     terms = models.TextField(null=True, blank=True)
     share_link = models.URLField(null=True, blank=True)
     

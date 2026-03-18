@@ -7,6 +7,10 @@ from users.notifications import notify_balance_update
 from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
 
+def get_user_name(user):
+    return user.first_name or user.email.split('@')[0]
+
+
 class AgreementService:
     @staticmethod
     def join_agreement(user, agreement):
@@ -30,7 +34,14 @@ class AgreementService:
             agreement_locked.status = 'awaiting_acceptance'
             agreement_locked.save()
             
-            return agreement_locked
+            msg = ChatMessage.objects.create(
+                agreement=agreement_locked,
+                sender=user,
+                text=f"{get_user_name(user)} joined agreement",
+                message_type='system'
+            )
+            
+            return agreement_locked, msg
 
     @staticmethod
     def accept_offer(user, agreement, offer, pin=None):
@@ -113,14 +124,22 @@ class AgreementService:
                     offer.status = 'accepted'
                     offer.save()
                     
+                    msg = ChatMessage.objects.create(
+                        agreement=agreement_locked,
+                        sender=user,
+                        text=f"{get_user_name(user)} funded escrow",
+                        message_type='system'
+                    )
+                    
                     # Return updated objects
-                    return agreement_locked, offer
+                    return agreement_locked, offer, msg
                 
         elif is_seller:
             offer.status = 'accepted_by_seller'
             offer.save()
+            msg = None
             
-        return agreement, offer
+        return agreement, offer, msg
 
     @staticmethod
     def confirm_agreement(user, agreement):
@@ -172,7 +191,14 @@ class AgreementService:
             agreement.completed_at = timezone.now()
             agreement.save()
             
-        return agreement
+            msg = ChatMessage.objects.create(
+                agreement=agreement,
+                sender=user,
+                text=f"{get_user_name(user)} confirmed delivery. Money released.",
+                message_type='system'
+            )
+            
+        return agreement, msg
 
     @staticmethod
     def reject_offer(user, agreement, offer):
@@ -232,7 +258,14 @@ class AgreementService:
         agreement.delivered_at = timezone.now()
         agreement.save()
         
-        return agreement
+        msg = ChatMessage.objects.create(
+            agreement=agreement,
+            sender=user,
+            text=f"{get_user_name(user)} marked as delivered",
+            message_type='system'
+        )
+        
+        return agreement, msg
 
     @staticmethod
     def lock_terms(agreement, offer):
