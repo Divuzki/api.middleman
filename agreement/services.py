@@ -13,7 +13,7 @@ def get_user_name(user):
 
 class AgreementService:
     @staticmethod
-    def join_agreement(user, agreement):
+    def join_agreement(user, agreement, return_msg=False):
         if agreement.initiator == user:
             raise ValueError("Initiator cannot join their own agreement")
         
@@ -41,7 +41,9 @@ class AgreementService:
                 message_type='system'
             )
             
-            return agreement_locked, msg
+            if return_msg:
+                return agreement_locked, msg
+            return agreement_locked
 
     @staticmethod
     def accept_offer(user, agreement, offer, pin=None):

@@ -495,7 +495,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
             agreement = Agreement.objects.get(id=agreement_id)
             offer = AgreementOffer.objects.get(id=offer_id, agreement=agreement)
             
-            agreement, offer = AgreementService.accept_offer(user, agreement, offer, pin)
+            agreement, offer, msg = AgreementService.accept_offer(user, agreement, offer, pin)
             # Return IDs instead of objects to avoid potential async/sync issues with model instances
             return {
                 'success': True, 
@@ -531,7 +531,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
     def process_agreement_confirmation(self, user, agreement_id):
         try:
             agreement = Agreement.objects.get(id=agreement_id)
-            agreement = AgreementService.confirm_agreement(user, agreement)
+            agreement, msg = AgreementService.confirm_agreement(user, agreement)
             return {'success': True, 'agreement': agreement}
         except Exception as e:
             logger.error(f"Error confirming agreement: {e}")

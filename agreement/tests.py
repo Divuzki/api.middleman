@@ -38,11 +38,12 @@ class AgreementTests(TestCase):
             'description': 'Test Description',
             'amount': 5000.00,
             'timeline': '5 days',
-            'creatorRole': 'buyer'
+            'creatorRole': 'buyer',
+            'agreementType': 'goods',
+            'feePayer': 'buyer'
         }
         
         response = self.client.post('/agreements/', data, format='json')
-        
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         
         # Check response structure
@@ -75,7 +76,9 @@ class AgreementTests(TestCase):
             'description': 'Selling item',
             'creatorRole': 'seller',
             'amount': 50000,
-            'timeline': '3 days'
+            'timeline': '3 days',
+            'agreementType': 'goods',
+            'feePayer': 'buyer'
         }
         
         response = self.client.post('/agreements/', data, format='json')
@@ -94,7 +97,7 @@ class AgreementTests(TestCase):
         
         agreement = Agreement.objects.get(id=response_data['id'])
         self.assertEqual(agreement.offers.count(), 1)
-        self.assertEqual(agreement.messages.count(), 1)
+        self.assertEqual(agreement.messages.count(), 2)
 
     def test_accept_offer_seller(self):
         # Create agreement and offer as buyer

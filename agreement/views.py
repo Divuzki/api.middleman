@@ -80,7 +80,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         user = request.user
 
         try:
-            agreement, msg = AgreementService.join_agreement(user, agreement)
+            agreement, msg = AgreementService.join_agreement(user, agreement, return_msg=True)
         except ValueError as e:
             raise ValidationError(str(e))
         
@@ -106,12 +106,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         offer = get_object_or_404(AgreementOffer, id=offer_id, agreement=agreement)
         
         try:
-            result = AgreementService.accept_offer(user, agreement, offer, pin)
-            if len(result) == 3:
-                agreement, offer, msg = result
-            else:
-                agreement, offer = result
-                msg = None
+            agreement, offer, msg = AgreementService.accept_offer(user, agreement, offer, pin)
         except ValueError as e:
              raise ValidationError(str(e))
         except Exception as e:
