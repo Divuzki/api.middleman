@@ -148,7 +148,14 @@ class WagerConsumer(AsyncWebsocketConsumer):
                     channel_id="default"
                 )
             )
-            apns_config = None
+            apns_config = messaging.APNSConfig(
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        alert=messaging.ApsAlert(title=title, body=body),
+                        sound="default"
+                    )
+                )
+            )
 
             # Special Handling for Chat Messages (Native Style)
             if event_type == 'chat_message':
@@ -162,23 +169,23 @@ class WagerConsumer(AsyncWebsocketConsumer):
                     "senderId": str(payload.get('senderId', '')),
                     "senderAvatar": str(payload.get('senderAvatar', '')),
                     "timestamp": str(payload.get('timestamp', '')),
+                    "title": title, # Include title/body in data for Android
+                    "body": body
                 })
                 
                 # Android: MessagingStyle via click_action/tag
+                # Note: We omit top-level Notification for chat_message to ensure 
+                # CustomFirebaseMessagingService handles it when app is in background.
+                # However, we DO send AndroidConfig to set priority
                 android_config = messaging.AndroidConfig(
-                    priority="high",
-                    notification=messaging.AndroidNotification(
-                        icon="ic_notification",
-                        channel_id="default",
-                        click_action="CHAT_MSG",
-                        tag=conversation_id
-                    )
+                    priority="high"
                 )
                 
                 # iOS: Category for input
                 apns_config = messaging.APNSConfig(
                     payload=messaging.APNSPayload(
                         aps=messaging.Aps(
+                            alert=messaging.ApsAlert(title=title, body=body),
                             category="CHAT_MSG",
                             thread_id=conversation_id,
                             sound="default"
@@ -193,16 +200,26 @@ class WagerConsumer(AsyncWebsocketConsumer):
                 devices = DeviceProfile.objects.filter(user=recipient, is_active=True, fcm_device__isnull=False)
                 for device_profile in devices:
                     try:
-                        message = messaging.Message(
-                            token=device_profile.fcm_device.registration_id,
-                            notification=messaging.Notification(
-                                title=title,
-                                body=body,
-                            ),
-                            android=android_config,
-                            apns=apns_config,
-                            data=message_payload
-                        )
+                        # CRITICAL: We do NOT set top-level `notification` if it's a chat message.
+                        # If we set it, Android system tray will intercept it and ignore CustomFirebaseMessagingService.
+                        # iOS will still display it because `alert` is explicitly set in `apns_config`.
+                        
+                        if event_type == 'chat_message':
+                            message = messaging.Message(
+                                token=device_profile.fcm_device.registration_id,
+                                android=android_config,
+                                apns=apns_config,
+                                data=message_payload
+                            )
+                        else:
+                            message = messaging.Message(
+                                token=device_profile.fcm_device.registration_id,
+                                notification=messaging.Notification(title=title, body=body),
+                                android=android_config,
+                                apns=apns_config,
+                                data=message_payload
+                            )
+                            
                         messaging.send(message)
                     except Exception as e:
                         logger.error(f"Failed to send push to {recipient.email}: {e}")
