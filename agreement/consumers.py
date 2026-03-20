@@ -379,7 +379,7 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     payload=messaging.APNSPayload(
                         aps=messaging.Aps(
                             alert=messaging.ApsAlert(title=title, body=body),
-                            category="CHAT_MSG",
+                            category="CHAT_MESSAGE",
                             thread_id=conversation_id,
                             sound="default"
                         )

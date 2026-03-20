@@ -163,7 +163,7 @@ def send_chat_notification(recipient, sender_name, message_text, conversation_id
                 data=data_payload,
                 android=AndroidConfig(
                     notification=AndroidNotification(
-                        click_action="CHAT_MSG",
+                        click_action="CHAT_MESSAGE",
                         tag=str(conversation_id),
                         channel_id="default"
                     )
@@ -171,7 +171,7 @@ def send_chat_notification(recipient, sender_name, message_text, conversation_id
                 apns=APNSConfig(
                     payload=APNSPayload(
                         aps=Aps(
-                            category="CHAT_MSG",
+                            category="CHAT_MESSAGE",
                             thread_id=str(conversation_id)
                         )
                     )
