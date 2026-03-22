@@ -20,6 +20,7 @@ from .notifications import send_device_logout_notification
 import requests
 import random
 import uuid
+import logging
 from wallet.utils import PaystackClient
 from django.conf import settings
 from django.core.cache import cache
@@ -32,6 +33,9 @@ from agreement.serializers import AgreementSerializer
 from wallet.models import Transaction
 from wallet.serializers import TransactionSerializer
 from middleman_api.utils import StandardResponse
+from middleman_api.exceptions import GatewayError
+
+logger = logging.getLogger(__name__)
 
 class AuthView(APIView):
     permission_classes = [IsAuthenticated]
@@ -55,6 +59,82 @@ class UserProfileUpdateView(GenericAPIView):
         serializer = self.get_serializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             user = serializer.save()
+            paystack_fields_updated = any(
+                field in serializer.validated_data
+                for field in ("phone_number", "first_name", "last_name")
+            )
+            if paystack_fields_updated:
+                phone = (user.phone_number or "").strip()
+                if phone:
+                    client = PaystackClient()
+
+                    if user.paystack_customer_code:
+                        try:
+                            client.update_customer(
+                                user.paystack_customer_code,
+                                first_name=user.first_name,
+                                last_name=user.last_name,
+                                phone=phone,
+                            )
+                        except GatewayError as e:
+                            logger.warning(
+                                f"Failed to update Paystack customer {user.paystack_customer_code}: {e}"
+                            )
+                            user.paystack_customer_code = None
+                            user.virtual_account_number = None
+                            user.virtual_account_name = None
+                            user.virtual_bank_name = None
+                            user.save(
+                                update_fields=[
+                                    "paystack_customer_code",
+                                    "virtual_account_number",
+                                    "virtual_account_name",
+                                    "virtual_bank_name",
+                                ]
+                            )
+
+                    if not user.paystack_customer_code:
+                        cust_resp = client.create_customer(
+                            email=user.email,
+                            first_name=user.first_name,
+                            last_name=user.last_name,
+                            phone=phone,
+                        )
+                        if cust_resp and cust_resp.get("status") and cust_resp.get("data"):
+                            user.paystack_customer_code = cust_resp["data"].get("customer_code")
+                            user.save(update_fields=["paystack_customer_code"])
+                        else:
+                            raise GatewayError("Failed to create Paystack customer")
+
+                    if not user.virtual_account_number and user.paystack_customer_code:
+                        try:
+                            dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                        except GatewayError as e:
+                            if "phone" in str(e).lower():
+                                client.update_customer(
+                                    user.paystack_customer_code,
+                                    first_name=user.first_name,
+                                    last_name=user.last_name,
+                                    phone=phone,
+                                )
+                                dva_resp = client.create_dedicated_account(user.paystack_customer_code)
+                            else:
+                                raise
+
+                        if dva_resp and dva_resp.get("status") and dva_resp.get("data"):
+                            data = dva_resp["data"]
+                            user.virtual_account_number = data.get("account_number")
+                            user.virtual_account_name = data.get("account_name")
+                            user.virtual_bank_name = (data.get("bank") or {}).get("name")
+                            user.save(
+                                update_fields=[
+                                    "virtual_account_number",
+                                    "virtual_account_name",
+                                    "virtual_bank_name",
+                                ]
+                            )
+                        else:
+                            raise GatewayError("Failed to generate virtual account. Please contact support.")
             # Return response in the specified format
             return StandardResponse(
                 message="Profile updated successfully",

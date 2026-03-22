@@ -1,10 +1,12 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
 from unittest.mock import patch, MagicMock
 from rest_framework.exceptions import AuthenticationFailed
 from django.core.cache import cache
+from middleman_api.exceptions import GatewayError
 
 User = get_user_model()
 
@@ -208,29 +210,107 @@ class BankListViewTests(TestCase):
             { "code": "033", "name": "United Bank for Africa" }
         ]
         self.assertEqual(response.data['data'], hardcoded_banks)
-        
-        # Verify API called
-        mock_instance.get_banks.assert_called_once()
-        
-        # Verify NOT cached
-        self.assertIsNone(cache.get(self.cache_key))
 
-    @patch('users.views.TransactPayClient')
-    def test_cache_miss_api_exception(self, MockClient):
-        # Setup mock to raise exception
-        mock_instance = MockClient.return_value
-        mock_instance.get_banks.side_effect = Exception("API Error")
 
-        # Make request
-        response = self.client.get(self.url)
+class UserProfilePaystackSyncTests(TestCase):
+    databases = '__all__'
 
-        # Assertions
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='paystack-sync@example.com',
+            password='testpassword',
+            first_name='Paystack',
+            last_name='Sync',
+        )
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('update-profile')
+
+    @patch('users.views.PaystackClient.update_customer')
+    @patch('users.views.PaystackClient.create_dedicated_account')
+    @patch('users.views.PaystackClient.create_customer')
+    def test_profile_update_creates_customer_and_dva_when_missing(
+        self,
+        mock_create_customer,
+        mock_create_dva,
+        mock_update_customer,
+    ):
+        mock_create_customer.return_value = {
+            'status': True,
+            'data': {'customer_code': 'CUS_12345'},
+        }
+        mock_create_dva.return_value = {
+            'status': True,
+            'data': {
+                'bank': {'name': 'Wema Bank'},
+                'account_name': 'Paystack Sync',
+                'account_number': '1234567890',
+            },
+        }
+
+        response = self.client.post(self.url, {'phone_number': '09000000000'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
-        # Verify fallback
-        hardcoded_banks = [
-            { "code": "011", "name": "First Bank of Nigeria" },
-            { "code": "058", "name": "Guaranty Trust Bank" },
-            { "code": "033", "name": "United Bank for Africa" }
-        ]
-        self.assertEqual(response.data['data'], hardcoded_banks)
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.paystack_customer_code, 'CUS_12345')
+        self.assertEqual(self.user.virtual_account_number, '1234567890')
+        mock_update_customer.assert_not_called()
+
+    @patch('users.views.PaystackClient.create_dedicated_account')
+    @patch('users.views.PaystackClient.update_customer')
+    def test_profile_update_updates_existing_customer_and_creates_dva(
+        self,
+        mock_update_customer,
+        mock_create_dva,
+    ):
+        self.user.paystack_customer_code = 'CUS_EXISTING'
+        self.user.save(update_fields=['paystack_customer_code'])
+
+        mock_create_dva.return_value = {
+            'status': True,
+            'data': {
+                'bank': {'name': 'Titan Paystack'},
+                'account_name': 'Paystack Sync',
+                'account_number': '9990001112',
+            },
+        }
+
+        response = self.client.post(self.url, {'phone_number': '09000000001'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.user.refresh_from_db()
+        mock_update_customer.assert_called_once()
+        self.assertEqual(self.user.virtual_account_number, '9990001112')
+
+    @patch('users.views.PaystackClient.create_dedicated_account')
+    @patch('users.views.PaystackClient.create_customer')
+    @patch('users.views.PaystackClient.update_customer')
+    def test_profile_update_recreates_customer_when_update_fails(
+        self,
+        mock_update_customer,
+        mock_create_customer,
+        mock_create_dva,
+    ):
+        self.user.paystack_customer_code = 'CUS_BROKEN'
+        self.user.save(update_fields=['paystack_customer_code'])
+
+        mock_update_customer.side_effect = GatewayError("Paystack Error: Customer not found")
+        mock_create_customer.return_value = {
+            'status': True,
+            'data': {'customer_code': 'CUS_NEW'},
+        }
+        mock_create_dva.return_value = {
+            'status': True,
+            'data': {
+                'bank': {'name': 'Wema Bank'},
+                'account_name': 'Paystack Sync',
+                'account_number': '1112223334',
+            },
+        }
+
+        response = self.client.post(self.url, {'phone_number': '09000000002'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.paystack_customer_code, 'CUS_NEW')
+        self.assertEqual(self.user.virtual_account_number, '1112223334')

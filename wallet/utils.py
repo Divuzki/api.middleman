@@ -30,12 +30,21 @@ class PaystackClient:
     def _request(self, method, endpoint, payload=None):
         url = f"{self.BASE_URL}{endpoint}"
         try:
-            if method == 'GET':
-                response = requests.get(url, headers=self.headers, params=payload, timeout=30)
+            method = (method or "GET").upper()
+            request_kwargs = {
+                "headers": self.headers,
+                "timeout": 30,
+            }
+            if method in {"GET", "DELETE"}:
+                request_kwargs["params"] = payload
             else:
-                response = requests.post(url, json=payload, headers=self.headers, timeout=30)
+                request_kwargs["json"] = payload
+
+            response = requests.request(method, url, **request_kwargs)
             
             response.raise_for_status()
+            if not response.content:
+                return None
             return response.json()
         except requests.RequestException as e:
             logger.error(f"Paystack API error ({endpoint}): {str(e)}")
