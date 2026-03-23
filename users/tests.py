@@ -34,8 +34,8 @@ class AuthenticationTests(TestCase):
         response = self.client.get(self.auth_url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['user']['email'], self.user_data['email'])
-        self.assertEqual(response.data['user']['uid'], self.user_data['uid'])
+        self.assertEqual(response.data['data']['user']['email'], self.user_data['email'])
+        self.assertEqual(response.data['data']['user']['uid'], self.user_data['uid'])
         
         # Verify user was created in DB
         user = User.objects.get(email=self.user_data['email'])
@@ -54,7 +54,7 @@ class AuthenticationTests(TestCase):
         response = self.client.get(self.auth_url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        user_data = response.data['user']
+        user_data = response.data['data']['user']
         self.assertIn('currency_preference', user_data)
         self.assertIn('hide_balance', user_data)
         self.assertEqual(user_data['currency_preference'], 'NGN') # Default
@@ -151,7 +151,7 @@ class BankListViewTests(TestCase):
         self.cache_key = 'bank_list'
         cache.delete(self.cache_key) # Ensure clean state
 
-    @patch('users.views.TransactPayClient')
+    @patch('users.views.PaystackClient')
     def test_cache_miss_api_success(self, MockClient):
         # Setup mock
         mock_instance = MockClient.return_value
@@ -175,7 +175,7 @@ class BankListViewTests(TestCase):
         cached_data = cache.get(self.cache_key)
         self.assertEqual(cached_data, expected_banks)
 
-    @patch('users.views.TransactPayClient')
+    @patch('users.views.PaystackClient')
     def test_cache_hit(self, MockClient):
         # Setup cache
         cached_banks = [{'code': '888', 'name': 'Cached Bank'}]
@@ -191,7 +191,7 @@ class BankListViewTests(TestCase):
         # Verify API NOT called
         MockClient.assert_not_called()
 
-    @patch('users.views.TransactPayClient')
+    @patch('users.views.PaystackClient')
     def test_cache_miss_api_fail(self, MockClient):
         # Setup mock to fail
         mock_instance = MockClient.return_value
@@ -314,3 +314,125 @@ class UserProfilePaystackSyncTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.paystack_customer_code, 'CUS_NEW')
         self.assertEqual(self.user.virtual_account_number, '1112223334')
+
+
+class IdentityVerificationFlowTests(TestCase):
+    databases = '__all__'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='kyc@example.com',
+            firebase_uid='kyc_uid',
+            first_name='Kyc',
+            last_name='User',
+        )
+
+    def test_verify_identity_sets_submitted_status(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            '/user/verify-identity/',
+            {'identityId': 'ident_123', 'verificationId': 'ver_123'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.identity_verification_status, 'submitted')
+        self.assertEqual(self.user.isIdentityVerified, False)
+        self.assertEqual(self.user.identity_id, 'ident_123')
+        self.assertEqual(self.user.verification_id, 'ver_123')
+
+    def test_identity_status_returns_extended_fields(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get('/user/identity-status/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data.get('data', {})
+        self.assertIn('identityVerificationStatus', data)
+        self.assertIn('identityVerificationUpdatedAt', data)
+
+
+class MetaMapWebhookTests(TestCase):
+    databases = '__all__'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='webhook@example.com',
+            firebase_uid='webhook_uid',
+            first_name='Web',
+            last_name='Hook',
+            verification_id='ver_abc',
+        )
+        self.secret = 'TestWebhookSecret123A'
+
+    def _sign(self, body: bytes) -> str:
+        import hashlib
+        import hmac
+        return hmac.new(self.secret.encode('utf-8'), body, hashlib.sha256).hexdigest()
+
+    def test_webhook_rejects_missing_signature(self):
+        with self.settings(METAMAP_WEBHOOK_SECRET=self.secret):
+            response = self.client.post(
+                '/webhooks/metamap/',
+                {'eventName': 'verification_completed'},
+                format='json',
+            )
+            self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_webhook_rejects_invalid_signature(self):
+        with self.settings(METAMAP_WEBHOOK_SECRET=self.secret):
+            body = b'{"eventName":"verification_completed"}'
+            response = self.client.post(
+                '/webhooks/metamap/',
+                data=body,
+                content_type='application/json',
+                HTTP_X_SIGNATURE='bad',
+            )
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_webhook_updates_user_status(self):
+        with self.settings(METAMAP_WEBHOOK_SECRET=self.secret):
+            payload = {
+                "eventName": "verification_completed",
+                "identityStatus": "verified",
+                "verificationId": "ver_abc",
+                "metadata": {"firebaseUid": "webhook_uid"},
+                "resource": "https://api.getmati.com/v2/verifications/ver_abc",
+            }
+            body = bytes(__import__('json').dumps(payload), 'utf-8')
+            sig = self._sign(body)
+            response = self.client.post(
+                '/webhooks/metamap/',
+                data=body,
+                content_type='application/json',
+                HTTP_X_SIGNATURE=sig,
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.user.refresh_from_db()
+            self.assertEqual(self.user.identity_verification_status, 'verified')
+            self.assertEqual(self.user.isIdentityVerified, True)
+
+    def test_webhook_deduplicates_same_payload(self):
+        with self.settings(METAMAP_WEBHOOK_SECRET=self.secret):
+            payload = {
+                "eventName": "verification_completed",
+                "identityStatus": "rejected",
+                "verificationId": "ver_abc",
+                "resource": "https://api.getmati.com/v2/verifications/ver_abc",
+            }
+            body = bytes(__import__('json').dumps(payload), 'utf-8')
+            sig = self._sign(body)
+            r1 = self.client.post(
+                '/webhooks/metamap/',
+                data=body,
+                content_type='application/json',
+                HTTP_X_SIGNATURE=sig,
+            )
+            r2 = self.client.post(
+                '/webhooks/metamap/',
+                data=body,
+                content_type='application/json',
+                HTTP_X_SIGNATURE=sig,
+            )
+            self.assertEqual(r1.status_code, status.HTTP_200_OK)
+            self.assertEqual(r2.status_code, status.HTTP_200_OK)

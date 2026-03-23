@@ -4,7 +4,8 @@ from .views import (
     BankListView, PayoutAccountListCreateView, PayoutAccountDeleteView,
     VerifyBankAccountView, IdentityVerificationView, IdentityStatusView,
     SetAccountPinView, DeviceListCreateView, DeviceDetailView,
-    UserActivitiesView, RequestPinChangeOTPView, VerifyPinChangeOTPView
+    UserActivitiesView, RequestPinChangeOTPView, VerifyPinChangeOTPView,
+    MetaMapWebhookView
 )
 
 urlpatterns = [
@@ -23,4 +24,5 @@ urlpatterns = [
     re_path(r'^user/devices/?$', DeviceListCreateView.as_view(), name='device-list-create'),
     re_path(r'^user/devices/(?P<device_uuid>[0-9a-f-]+)/?$', DeviceDetailView.as_view(), name='device-detail'),
     re_path(r'^activities/?$', UserActivitiesView.as_view(), name='user-activities'),
+    re_path(r'^webhooks/metamap/?$', MetaMapWebhookView.as_view(), name='metamap-webhook'),
 ]

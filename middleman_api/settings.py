@@ -45,6 +45,7 @@ NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
 NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midman.app/webhooks/nowpayments/")
 PAYMENT_REDIRECT_URL = os.getenv("PAYMENT_REDIRECT_URL", "https://midman.app/payment/callback")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://midman.app")
+METAMAP_WEBHOOK_SECRET = os.getenv("METAMAP_WEBHOOK_SECRET")
 
 
 # Production Security Settings

@@ -1,7 +1,17 @@
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.utils import timezone
 from fcm_django.models import FCMDevice
+
+IDENTITY_VERIFICATION_STATUS_CHOICES = [
+    ('unverified', 'Unverified'),
+    ('submitted', 'Submitted'),
+    ('in_review', 'In review'),
+    ('verified', 'Verified'),
+    ('rejected', 'Rejected'),
+    ('error', 'Error'),
+]
 
 class UserManager(BaseUserManager):
     """Define a model manager for User model with no username field."""
@@ -48,6 +58,13 @@ class User(AbstractUser):
     verifiedAt = models.DateTimeField(blank=True, null=True)
     identity_id = models.CharField(max_length=255, null=True, blank=True)
     verification_id = models.CharField(max_length=255, null=True, blank=True)
+    identity_verification_status = models.CharField(
+        max_length=32,
+        choices=IDENTITY_VERIFICATION_STATUS_CHOICES,
+        default='unverified',
+    )
+    identity_verification_reason = models.CharField(max_length=255, null=True, blank=True)
+    identity_verification_updated_at = models.DateTimeField(blank=True, null=True)
 
     currency_preference = models.CharField(max_length=3, choices=[('NGN', 'Nigerian Naira'), ('USD', 'US Dollar')], default='NGN')
     hide_balance = models.BooleanField(default=False)
@@ -76,6 +93,35 @@ class User(AbstractUser):
 
     def verify_pin(self, pin):
         return check_password(pin, self.transaction_pin)
+
+    def set_identity_verification_status(self, status, reason=None):
+        self.identity_verification_status = status
+        self.identity_verification_reason = reason
+        self.identity_verification_updated_at = timezone.now()
+
+        if status == 'verified':
+            self.isIdentityVerified = True
+            if not self.verifiedAt:
+                self.verifiedAt = timezone.now()
+        else:
+            self.isIdentityVerified = False
+
+
+class IdentityWebhookEvent(models.Model):
+    payload_hash = models.CharField(max_length=64, unique=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    signature = models.CharField(max_length=255, null=True, blank=True)
+    headers = models.JSONField(null=True, blank=True)
+    payload = models.JSONField(null=True, blank=True)
+    raw_body = models.TextField(null=True, blank=True)
+    event_name = models.CharField(max_length=64, null=True, blank=True)
+    resource = models.CharField(max_length=512, null=True, blank=True)
+    flow_id = models.CharField(max_length=64, null=True, blank=True)
+    identity_status = models.CharField(max_length=64, null=True, blank=True)
+    verification_id = models.CharField(max_length=255, null=True, blank=True)
+    identity_id = models.CharField(max_length=255, null=True, blank=True)
+    processed = models.BooleanField(default=False)
+    processing_error = models.CharField(max_length=255, null=True, blank=True)
 
 
 class PayoutAccount(models.Model):

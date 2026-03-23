@@ -7,7 +7,8 @@ from rest_framework.exceptions import ValidationError, PermissionDenied, NotFoun
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password
-from .models import PayoutAccount, DeviceProfile
+from django.db import IntegrityError
+from .models import PayoutAccount, DeviceProfile, User, IdentityWebhookEvent
 from .serializers import (
     UserSerializer, AuthUserSerializer, UserProfileUpdateSerializer, 
     UserProfilePictureSerializer, PayoutAccountSerializer, 
@@ -16,11 +17,14 @@ from .serializers import (
 )
 from .serializers import DeviceProfileSerializer
 from .emails import send_otp_email
-from .notifications import send_device_logout_notification
+from .notifications import send_device_logout_notification, send_standard_notification
 import requests
 import random
 import uuid
 import logging
+import hashlib
+import hmac
+import json
 from wallet.utils import PaystackClient
 from django.conf import settings
 from django.core.cache import cache
@@ -291,10 +295,17 @@ class IdentityVerificationView(GenericAPIView):
             if number and not number.isdigit():
                  raise ValidationError("Invalid number format. Must be digits only.")
 
-            # Update user verification status
             user = request.user
-            user.isIdentityVerified = True
-            user.verifiedAt = timezone.now()
+
+            if getattr(user, 'identity_verification_status', None) == 'verified':
+                return StandardResponse(
+                    message="Identity already verified",
+                    data={
+                        "verified": True,
+                        "status": user.identity_verification_status,
+                        "verifiedAt": user.verifiedAt,
+                    },
+                )
             
             # Save identity_id and verification_id if present
             if serializer.validated_data.get('identity_id'):
@@ -302,11 +313,16 @@ class IdentityVerificationView(GenericAPIView):
             if serializer.validated_data.get('verification_id'):
                 user.verification_id = serializer.validated_data.get('verification_id')
 
+            user.set_identity_verification_status('submitted', reason=None)
             user.save()
             
             return StandardResponse(
-                message="Identity verified successfully",
-                data={"verified": True}
+                message="Identity check received",
+                data={
+                    "verified": user.isIdentityVerified,
+                    "status": user.identity_verification_status,
+                    "updatedAt": user.identity_verification_updated_at,
+                }
             )
         
         raise ValidationError(serializer.errors)
@@ -319,8 +335,154 @@ class IdentityStatusView(GenericAPIView):
         user = request.user
         return StandardResponse(data={
             "isIdentityVerified": user.isIdentityVerified,
-            "verifiedAt": user.verifiedAt
+            "verifiedAt": user.verifiedAt,
+            "identityVerificationStatus": user.identity_verification_status,
+            "identityVerificationReason": user.identity_verification_reason,
+            "identityVerificationUpdatedAt": user.identity_verification_updated_at,
         })
+
+
+class MetaMapWebhookView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        secret = getattr(settings, 'METAMAP_WEBHOOK_SECRET', None)
+        signature = request.headers.get('x-signature')
+        raw_body = request.body or b''
+
+        if not secret:
+            return Response({"detail": "Webhook not configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        if not signature:
+            return Response({"detail": "Missing signature"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        expected = hmac.new(
+            key=secret.encode('utf-8'),
+            msg=raw_body,
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(expected, signature):
+            return Response({"detail": "Invalid signature"}, status=status.HTTP_403_FORBIDDEN)
+
+        payload_hash = hashlib.sha256(raw_body).hexdigest()
+
+        try:
+            payload = json.loads(raw_body.decode('utf-8') or '{}')
+        except Exception:
+            payload = None
+
+        event_name = payload.get('eventName') if isinstance(payload, dict) else None
+        resource = payload.get('resource') if isinstance(payload, dict) else None
+        flow_id = payload.get('flowId') if isinstance(payload, dict) else None
+        identity_status = payload.get('identityStatus') if isinstance(payload, dict) else None
+
+        verification_id = None
+        identity_id = None
+
+        if isinstance(payload, dict):
+            verification_id = payload.get('verificationId') or payload.get('verificationID')
+            identity_id = payload.get('identityId') or payload.get('identityID') or payload.get('identity')
+
+        if not verification_id and isinstance(resource, str):
+            verification_id = resource.rstrip('/').split('/')[-1] or None
+
+        try:
+            IdentityWebhookEvent.objects.create(
+                payload_hash=payload_hash,
+                signature=signature,
+                headers=dict(request.headers),
+                payload=payload,
+                raw_body=raw_body.decode('utf-8', errors='replace'),
+                event_name=event_name,
+                resource=resource,
+                flow_id=flow_id,
+                identity_status=identity_status,
+                verification_id=verification_id,
+                identity_id=identity_id,
+            )
+        except IntegrityError:
+            return Response({"ok": True}, status=status.HTTP_200_OK)
+
+        mapped_status = None
+        reason = None
+
+        if identity_status:
+            normalized = str(identity_status).strip().lower()
+            if normalized == 'verified':
+                mapped_status = 'verified'
+            elif normalized in ('reviewneeded', 'review_needed', 'review needed', 'postponed'):
+                mapped_status = 'in_review'
+            elif normalized == 'rejected':
+                mapped_status = 'rejected'
+            else:
+                mapped_status = None
+
+        if not mapped_status and event_name:
+            normalized_event = str(event_name).strip().lower()
+            if normalized_event in ('verification_started', 'verification_inputs_completed'):
+                mapped_status = 'submitted'
+
+        user = None
+        if verification_id:
+            user = User.objects.filter(verification_id=verification_id).first()
+        if not user and identity_id:
+            user = User.objects.filter(identity_id=identity_id).first()
+        if not user and isinstance(payload, dict):
+            metadata = payload.get('metadata')
+            if isinstance(metadata, dict):
+                meta_uid = metadata.get('firebaseUid') or metadata.get('firebase_uid') or metadata.get('uid')
+                if meta_uid:
+                    user = User.objects.filter(firebase_uid=str(meta_uid)).first()
+
+        if user and mapped_status:
+            previous_status = user.identity_verification_status
+            user.set_identity_verification_status(mapped_status, reason=reason)
+            if identity_id and not user.identity_id:
+                user.identity_id = identity_id
+            if verification_id and not user.verification_id:
+                user.verification_id = verification_id
+            user.save()
+
+            if previous_status != mapped_status:
+                title = "Identity check update"
+                body = "We have an update about your identity check."
+                url = "/app/profile"
+
+                if mapped_status == 'submitted':
+                    title = "Identity check received"
+                    body = "We received your identity check. We'll notify you when it's done."
+                    url = "/app/verify-identity"
+                elif mapped_status == 'in_review':
+                    title = "Identity check in review"
+                    body = "Your identity check is in review. We'll update you soon."
+                    url = "/app/verify-identity"
+                elif mapped_status == 'verified':
+                    title = "Identity verified"
+                    body = "Your identity is verified. You're all set."
+                    url = "/app/profile"
+                elif mapped_status == 'rejected':
+                    title = "Identity check issue"
+                    body = "We couldn't verify your identity. Please try again."
+                    url = "/app/verify-identity"
+                elif mapped_status == 'error':
+                    title = "Identity check problem"
+                    body = "We hit a problem verifying your identity. Please try again later."
+                    url = "/app/verify-identity"
+
+                send_standard_notification(
+                    user,
+                    title,
+                    body,
+                    data={
+                        "type": "IDENTITY_STATUS",
+                        "status": mapped_status,
+                        "url": url,
+                    },
+                )
+
+        IdentityWebhookEvent.objects.filter(payload_hash=payload_hash).update(processed=True)
+        return Response({"ok": True}, status=status.HTTP_200_OK)
 
 class SetAccountPinView(GenericAPIView):
     permission_classes = [IsAuthenticated]
