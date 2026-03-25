@@ -346,6 +346,13 @@ class WithdrawalView(APIView):
             if wallet.balance < amount:
                 raise ValidationError("Insufficient funds")
             
+            # Get Payout Account
+            from users.models import PayoutAccount
+            try:
+                payout_account = PayoutAccount.objects.get(id=account_id, user=user)
+            except PayoutAccount.DoesNotExist:
+                raise ValidationError("Invalid payout account")
+            
             # Calculate USD/NGN amounts
             converted = get_converted_amounts(amount, currency)
 
@@ -361,13 +368,18 @@ class WithdrawalView(APIView):
                 category='Withdrawal',
                 status='PENDING',
                 reference=tx_id,
-                description=f"Withdrawal to account {account_id}",
+                description=f"Withdrawal to account {payout_account.bank_name}",
                 icon='cash-outline'
             )
 
             # Process Payout
             try:
-                PayoutService.process_payout(tx)
+                PayoutService.process_payout(tx, payout_account)
+            except ValueError as ve:
+                logger.error(f"Payout validation failed for {tx_id}: {ve}")
+                tx.status = 'FAILED'
+                tx.save()
+                raise ValidationError(str(ve))
             except Exception as e:
                 logger.error(f"Payout failed for {tx_id}: {e}")
                 tx.status = 'FAILED'

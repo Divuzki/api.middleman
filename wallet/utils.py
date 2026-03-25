@@ -114,6 +114,32 @@ class PaystackClient:
         """
         return self._request('GET', f'/transaction/verify/{reference}')
 
+    def create_transfer_recipient(self, type, name, account_number, bank_code, currency="NGN"):
+        """
+        Create a transfer recipient.
+        """
+        payload = {
+            "type": type,
+            "name": name,
+            "account_number": account_number,
+            "bank_code": bank_code,
+            "currency": currency
+        }
+        return self._request('POST', '/transferrecipient', payload)
+
+    def initiate_transfer(self, source, amount, recipient, reason=""):
+        """
+        Initiate a transfer.
+        amount is in kobo.
+        """
+        payload = {
+            "source": source,
+            "amount": amount,
+            "recipient": recipient,
+            "reason": reason
+        }
+        return self._request('POST', '/transfer', payload)
+
     def list_transactions(self, customer=None, status=None, amount=None, perPage=50):
         """
         List transactions.

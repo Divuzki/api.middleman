@@ -119,15 +119,76 @@ class WalletEngine:
 
 class PayoutService:
     @staticmethod
-    def process_payout(transaction):
+    def process_payout(transaction, payout_account):
         """
-        Simulates a payout process and updates the transaction status to SUCCESSFUL.
+        Processes a payout using Paystack Transfer API.
+        Deducts 300 NGN commission.
         """
         logger.info(f"Processing payout for transaction {transaction.reference}")
         
-        # Simulate payout processing logic here (e.g., call to external payout API)
-        # For now, we assume success immediately.
+        from django.conf import settings
+        from .utils import PaystackClient
         
-        WalletEngine.approve_transaction(transaction.pk)
+        # Ensure transaction amount is sufficient to cover the commission
+        commission_fee = 300
+        if transaction.amount <= commission_fee:
+            raise ValueError(f"Withdrawal amount must be greater than {commission_fee} NGN")
+            
+        net_amount = transaction.amount - commission_fee
         
-        logger.info(f"Payout successful for transaction {transaction.reference}")
+        # We process via Paystack
+        client = PaystackClient()
+        
+        # 1. Create a transfer recipient for the user
+        recipient_resp = client.create_transfer_recipient(
+            type="nuban",
+            name=payout_account.account_name or payout_account.user.get_full_name() or "User",
+            account_number=payout_account.account_number,
+            bank_code=payout_account.bank_code,
+            currency="NGN"
+        )
+        
+        if not recipient_resp.get('status'):
+            raise ValueError(f"Failed to create transfer recipient: {recipient_resp.get('message')}")
+            
+        recipient_code = recipient_resp['data']['recipient_code']
+        
+        # 2. Initiate the transfer to the user
+        transfer_resp = client.initiate_transfer(
+            source="balance",
+            amount=int(net_amount * 100), # amount in kobo
+            recipient=recipient_code,
+            reason=f"Withdrawal {transaction.reference}"
+        )
+        
+        if not transfer_resp.get('status'):
+            raise ValueError(f"Transfer failed: {transfer_resp.get('message')}")
+            
+        transfer_data = transfer_resp['data']
+        paystack_reference = transfer_data.get('reference')
+        
+        # 3. Handle the commission (transfer to COMMISSION_SLP_ACCT)
+        commission_acct = getattr(settings, 'COMMISSION_SLP_ACCT', None)
+        if commission_acct:
+            try:
+                client.initiate_transfer(
+                    source="balance",
+                    amount=int(commission_fee * 100), # amount in kobo
+                    recipient=commission_acct,
+                    reason=f"Commission for {transaction.reference}"
+                )
+            except Exception as e:
+                logger.error(f"Commission transfer failed for {transaction.reference}: {str(e)}")
+                # We do not fail the user's withdrawal if commission transfer fails, just log it.
+        
+        # 4. Debit the wallet immediately for the full amount
+        wallet = transaction.wallet
+        WalletEngine._debit_wallet(wallet, transaction)
+        
+        # Note: Since transfer is asynchronous, transaction stays PENDING.
+        # It will be updated by a webhook later.
+        transaction.reference = paystack_reference or transaction.reference
+        transaction.status = 'PENDING'
+        transaction.save()
+        
+        logger.info(f"Payout initiated successfully for transaction {transaction.reference}")
