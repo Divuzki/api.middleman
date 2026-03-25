@@ -122,15 +122,24 @@ class PayoutService:
     def process_payout(transaction, payout_account):
         """
         Processes a payout using Paystack Transfer API.
-        Deducts 300 NGN commission.
+        Deducts a configurable withdrawal commission (default 300 NGN).
         """
         logger.info(f"Processing payout for transaction {transaction.reference}")
         
         from django.conf import settings
+        from decimal import Decimal, InvalidOperation
         from .utils import PaystackClient
         
         # Ensure transaction amount is sufficient to cover the commission
-        commission_fee = 300
+        commission_fee_raw = getattr(settings, 'WITHDRAWAL_COMMISSION_FEE', 300)
+        try:
+            commission_fee = Decimal(str(commission_fee_raw))
+        except (InvalidOperation, TypeError):
+            raise ValueError("Invalid WITHDRAWAL_COMMISSION_FEE configuration")
+
+        if commission_fee < 0:
+            raise ValueError("WITHDRAWAL_COMMISSION_FEE must be >= 0")
+
         if transaction.amount <= commission_fee:
             raise ValueError(f"Withdrawal amount must be greater than {commission_fee} NGN")
             

@@ -1,10 +1,14 @@
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from django.test import TestCase, override_settings
 from unittest.mock import patch
 from middleman_api.exceptions import GatewayError
 from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Transaction
+from users.models import PayoutAccount
+from wallet.services import PayoutService
+from decimal import Decimal
 
 User = get_user_model()
 
@@ -541,3 +545,83 @@ class PaystackIntegrationTests(APITestCase):
 def import_json_dumps(data):
     import json
     return json.dumps(data, separators=(',', ':'))
+
+
+class PayoutServiceCommissionFeeTests(TestCase):
+    databases = {'default', 'wallet_db'}
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='payout-test@example.com',
+            password='password123',
+            first_name='Payout',
+            last_name='Test'
+        )
+        self.wallet = Wallet.objects.get(user_id=self.user.id)
+        self.wallet.balance = Decimal('5000.00')
+        self.wallet.save()
+
+        self.payout_account = PayoutAccount.objects.create(
+            user=self.user,
+            type='bank',
+            currency='NGN',
+            bank_name='Test Bank',
+            bank_code='999',
+            account_number='0123456789',
+            account_name='Payout Test'
+        )
+
+    @override_settings(WITHDRAWAL_COMMISSION_FEE=Decimal('500.00'), COMMISSION_SLP_ACCT=None)
+    @patch('wallet.utils.PaystackClient')
+    def test_process_payout_uses_configurable_commission_fee(self, MockPaystackClient):
+        mock_client = MockPaystackClient.return_value
+        mock_client.create_transfer_recipient.return_value = {
+            'status': True,
+            'data': {'recipient_code': 'RCP_123'}
+        }
+        mock_client.initiate_transfer.return_value = {
+            'status': True,
+            'data': {'reference': 'ps_ref_001'}
+        }
+
+        tx = Transaction.objects.create(
+            wallet=self.wallet,
+            title="Withdrawal",
+            amount=Decimal('2000.00'),
+            transaction_type='WITHDRAWAL',
+            category='Withdrawal',
+            status='PENDING',
+            reference='ref_withdrawal_commission_001',
+            payment_method='PAYSTACK',
+            payment_currency='NGN'
+        )
+
+        PayoutService.process_payout(tx, self.payout_account)
+
+        mock_client.initiate_transfer.assert_called_once()
+        _, kwargs = mock_client.initiate_transfer.call_args
+        self.assertEqual(kwargs['amount'], 150000)
+
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, Decimal('3000.00'))
+
+        tx.refresh_from_db()
+        self.assertEqual(tx.status, 'PENDING')
+        self.assertEqual(tx.reference, 'ps_ref_001')
+
+    @override_settings(WITHDRAWAL_COMMISSION_FEE=Decimal('500.00'), COMMISSION_SLP_ACCT=None)
+    def test_process_payout_rejects_amount_equal_to_commission_fee(self):
+        tx = Transaction.objects.create(
+            wallet=self.wallet,
+            title="Withdrawal",
+            amount=Decimal('500.00'),
+            transaction_type='WITHDRAWAL',
+            category='Withdrawal',
+            status='PENDING',
+            reference='ref_withdrawal_commission_002',
+            payment_method='PAYSTACK',
+            payment_currency='NGN'
+        )
+
+        with self.assertRaises(ValueError):
+            PayoutService.process_payout(tx, self.payout_account)
