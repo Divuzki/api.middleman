@@ -140,10 +140,19 @@ class PayoutService:
         if commission_fee < 0:
             raise ValueError("WITHDRAWAL_COMMISSION_FEE must be >= 0")
 
-        if transaction.amount <= commission_fee:
+        try:
+            tx_amount = transaction.amount
+            if not isinstance(tx_amount, Decimal):
+                tx_amount = Decimal(str(tx_amount))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("Invalid transaction amount")
+
+        transaction.amount = tx_amount
+
+        if tx_amount <= commission_fee:
             raise ValueError(f"Withdrawal amount must be greater than {commission_fee} NGN")
             
-        net_amount = transaction.amount - commission_fee
+        net_amount = tx_amount - commission_fee
         
         # We process via Paystack
         client = PaystackClient()
@@ -165,7 +174,7 @@ class PayoutService:
         # 2. Initiate the transfer to the user
         transfer_resp = client.initiate_transfer(
             source="balance",
-            amount=int(net_amount * 100), # amount in kobo
+            amount=int((net_amount * Decimal('100')).to_integral_value()), # amount in kobo
             recipient=recipient_code,
             reason=f"Withdrawal {transaction.reference}"
         )
@@ -182,7 +191,7 @@ class PayoutService:
             try:
                 client.initiate_transfer(
                     source="balance",
-                    amount=int(commission_fee * 100), # amount in kobo
+                    amount=int((commission_fee * Decimal('100')).to_integral_value()), # amount in kobo
                     recipient=commission_acct,
                     reason=f"Commission for {transaction.reference}"
                 )

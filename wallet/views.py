@@ -349,8 +349,10 @@ class WithdrawalView(APIView):
             # Get Payout Account
             from users.models import PayoutAccount
             try:
-                payout_account = PayoutAccount.objects.get(id=account_id, user=user)
-            except PayoutAccount.DoesNotExist:
+                # Strip prefix if present
+                clean_account_id = str(account_id).replace('acc_', '')
+                payout_account = PayoutAccount.objects.get(id=clean_account_id, user=user)
+            except (PayoutAccount.DoesNotExist, ValueError):
                 raise ValidationError("Invalid payout account")
             
             # Calculate USD/NGN amounts
