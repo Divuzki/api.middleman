@@ -1,11 +1,11 @@
-from django.test import SimpleTestCase, TestCase, TransactionTestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import resolve, reverse
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
 from unittest.mock import patch
-from wallet.models import Wallet, Transaction
-from wallet.views import DepositView, VerifyDepositView
+from .models import Wallet, Transaction
+from .views import DepositView, VerifyDepositView
 from django.conf import settings
 import hmac
 import hashlib
@@ -53,6 +53,22 @@ class DepositFlowTests(TestCase):
         self.client.force_authenticate(user=self.user)
         self.wallet = Wallet.objects.get(user_id=self.user.id)
 
+    @patch('wallet.views.TransactPayClient.initialize_payment')
+    def test_initiate_deposit_korapay(self, mock_init):
+        mock_init.return_value = {
+            'status': True,
+            'data': {'checkout_url': 'https://checkout.korapay.com/xyz'}
+        }
+
+        url = reverse('deposit')
+        data = {'amount': '5000.00', 'currency': 'NGN'}
+        response = self.client.post(url, data)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['payment_url'], 'https://checkout.korapay.com/xyz')
+        self.assertEqual(response.data['currency'], 'NGN')
+        self.assertTrue(Transaction.objects.filter(payment_method='TRANSACTPAY').exists())
+
     @patch('wallet.views.NOWPaymentsClient.create_payment')
     def test_initiate_deposit_nowpayments(self, mock_create):
         mock_create.return_value = {
@@ -67,16 +83,34 @@ class DepositFlowTests(TestCase):
         response = self.client.post(url, data)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # StandardResponse wraps data in a 'data' field
-        self.assertEqual(response.data['data']['currency'], 'USD')
-        self.assertEqual(response.data['data']['pay_currency'], 'trx')
+        self.assertEqual(response.data['currency'], 'USD')
+        self.assertEqual(response.data['pay_currency'], 'trx')
         self.assertTrue(Transaction.objects.filter(payment_method='NOWPAYMENTS').exists())
 
+    @patch('wallet.views.notify_balance_update')
+    @patch('wallet.views.TransactPayClient.verify_payment')
+    def test_verify_korapay_deposit(self, mock_verify, mock_notify):
+        tx = Transaction.objects.create(
+            wallet=self.wallet, amount=5000, reference='ref_789', 
+            status='PENDING', payment_method='TRANSACTPAY'
+        )
+        
+        mock_verify.return_value = {
+            'status': True,
+            'data': {'status': 'success'}
+        }
+        
+        url = reverse('verify-deposit', kwargs={'reference': 'ref_789'})
+        response = self.client.get(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['data']['status'], 'success')
+        
+        tx.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        mock_notify.assert_called_once()
 
-class WithdrawalTests(TestCase):
-    pass
-
-class WebhookTests(TransactionTestCase):
+class WebhookTests(TestCase):
     databases = {'default', 'wallet_db'}
 
     def setUp(self):
@@ -94,11 +128,10 @@ class WebhookTests(TransactionTestCase):
         )
         return digest.hexdigest()
 
-    @patch('wallet.services.notify_balance_update')
+    @patch('wallet.views.notify_balance_update')
     def test_nowpayments_webhook_success(self, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=3000, reference='ref_np_ok', status='PENDING',
-            transaction_type='DEPOSIT',
             payment_method='NOWPAYMENTS', payment_currency='USD'
         )
         payload = {
@@ -135,11 +168,10 @@ class WebhookTests(TransactionTestCase):
         self.assertEqual(tx.status, 'PENDING')
         self.assertEqual(float(self.wallet.balance), 0.0)
 
-    @patch('wallet.services.notify_balance_update')
+    @patch('wallet.views.notify_balance_update')
     def test_nowpayments_repeated_deposit(self, mock_notify):
         tx = Transaction.objects.create(
             wallet=self.wallet, amount=1500, reference='ref_np_repeat', status='PENDING',
-            transaction_type='DEPOSIT',
             payment_method='NOWPAYMENTS', payment_currency='USD'
         )
         payload = {
@@ -160,4 +192,22 @@ class WebhookTests(TransactionTestCase):
         # Should be called only once because second time tx is already successful
         mock_notify.assert_called_once()
 
-
+    @patch('wallet.views.notify_balance_update')
+    @patch('wallet.views.TransactPayClient.verify_payment')
+    def test_korapay_webhook_success(self, mock_verify, mock_notify):
+        tx = Transaction.objects.create(
+            wallet=self.wallet, amount=2500, reference='ref_kp_ok', status='PENDING',
+            payment_method='TRANSACTPAY', payment_currency='NGN'
+        )
+        mock_verify.return_value = {
+            "status": True,
+            "data": {"status": "success"}
+        }
+        url = reverse('transactpay-webhook')
+        response = self.client.post(url, data={"reference": "ref_kp_ok"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        tx.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(float(self.wallet.balance), 2500.0)
+        mock_notify.assert_called_once()

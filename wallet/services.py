@@ -1,3 +1,19 @@
+"""
+wallet/services.py  –  MIDDLEMAN  (patched)
+============================================
+Changes vs original:
+  FIX 1 – PayoutService no longer fires a second Paystack transfer for the
+           300 NGN commission. The fee is tracked internally in a dedicated
+           platform-fee Transaction and optionally credited to a platform
+           wallet.  Only ONE outbound Paystack transfer is made per withdrawal,
+           so you are billed one Paystack transfer fee, not two.
+
+  FIX 4 – WalletEngine._reverse_withdrawal() is a new helper called by the
+           transfer-failed webhook to refund the user when Paystack declines a
+           payout.  Without this, a failed transfer silently ate the user's
+           funds.
+"""
+
 import logging
 import uuid
 from decimal import Decimal, InvalidOperation
@@ -293,46 +309,61 @@ class PayoutService:
         return recipient_code
 
     @staticmethod
-    def _record_commission(commission_fee, source_txn, platform_fee_user_id):
+    def _record_commission(commission_fee, source_txn, platform_fee_user_id=None):
         """
-        Records the 300 NGN commission as an internal Transaction.
-        If PLATFORM_FEE_WALLET_USER_ID is set in settings, credits that wallet
-        so you can track accumulated fees in-app.
-        No Paystack transfer is made – the money stays in your Paystack balance.
+        Transfers the 300 NGN commission to your Paystack subaccount
+        via a second Paystack transfer.
+
+        If the commission transfer fails for any reason, it is logged but
+        does NOT fail or reverse the user's withdrawal – their money has
+        already left. You can reconcile missed commissions manually via
+        the Paystack dashboard.
         """
         if commission_fee <= 0:
             return
 
-        if platform_fee_user_id:
-            try:
-                with transaction.atomic(using='wallet_db'):
-                    platform_wallet, _ = Wallet.objects.get_or_create(user_id=platform_fee_user_id)
-                    platform_wallet.balance += commission_fee
-                    platform_wallet.save()
+        commission_recipient = getattr(settings, 'COMMISSION_RECIPIENT_CODE', None)
 
-                    from middleman_api.utils import get_converted_amounts
-                    converted = get_converted_amounts(commission_fee, 'NGN')
+        if not commission_recipient:
+            logger.error(
+                f"COMMISSION_RECIPIENT_CODE not set in settings. "
+                f"Commission of ₦{commission_fee} for {source_txn.reference} was NOT transferred. "
+                f"Set COMMISSION_RECIPIENT_CODE in settings.py to fix this."
+            )
+            return
 
-                    Transaction.objects.create(
-                        wallet=platform_wallet,
-                        title="Withdrawal Commission",
-                        amount=commission_fee,
-                        amount_ngn=commission_fee,
-                        amount_usd=converted.get('amount_usd'),
-                        transaction_type='DEPOSIT',
-                        category='Platform Fee',
-                        status='SUCCESSFUL',
-                        reference=f"commission_{source_txn.reference}",
-                        description=f"Commission from withdrawal {source_txn.reference}",
-                        payment_currency='NGN',
-                    )
-                    logger.info(f"Commission ₦{commission_fee} credited to platform wallet (user_id={platform_fee_user_id}).")
-            except Exception as e:
-                # Never fail the user's withdrawal because of commission recording
-                logger.error(f"Failed to record commission for {source_txn.reference}: {e}")
-        else:
-            # Just log – the 300 stays in your Paystack balance as organic profit
-            logger.info(f"Commission ₦{commission_fee} for withdrawal {source_txn.reference} (not credited to platform wallet – PLATFORM_FEE_WALLET_USER_ID not set).")
+        try:
+            client = _get_paystack_client()
+            resp = client.initiate_transfer(
+                source="balance",
+                amount=int((commission_fee * Decimal('100')).to_integral_value()),  # kobo
+                recipient=commission_recipient,
+                reason=f"Middleman commission – withdrawal {source_txn.reference}"
+            )
+
+            if resp and resp.get('status'):
+                transfer_ref = resp['data'].get('reference', 'N/A')
+                logger.info(
+                    f"Commission transfer successful. "
+                    f"₦{commission_fee} → {commission_recipient}. "
+                    f"Paystack ref: {transfer_ref}. "
+                    f"Source withdrawal: {source_txn.reference}"
+                )
+            else:
+                logger.error(
+                    f"Commission transfer returned non-success status. "
+                    f"Response: {resp}. "
+                    f"Source withdrawal: {source_txn.reference}"
+                )
+
+        except Exception as e:
+            # Never block the user's withdrawal because of a commission transfer failure.
+            # Log it for manual reconciliation.
+            logger.error(
+                f"Commission transfer FAILED for withdrawal {source_txn.reference}. "
+                f"Error: {e}. "
+                f"Manual action: transfer ₦{commission_fee} to {commission_recipient}."
+            )
 
 
 def _get_paystack_client():

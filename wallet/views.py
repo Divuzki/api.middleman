@@ -98,10 +98,9 @@ class DepositView(APIView):
                     })
 
                     # FIX 3: We no longer create a pending transaction for DVA deposits.
-                    # The webhook creates the authoritative transaction directly.
-                    # (Old logic that created a pending transaction by amount matched 
-                    # incorrectly because the webhook sends the gross amount).
-
+                    # The PaystackWebhookView creates the authoritative transaction directly.
+                    # response_data['reference'] = ref  # (optional)
+                    
                     # Paystack Dedicated Virtual Account Logic
                     client = PaystackClient()
                     user = request.user

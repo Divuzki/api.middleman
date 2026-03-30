@@ -69,6 +69,14 @@ class Agreement(models.Model):
     
     delivery_proof = models.JSONField(default=list, blank=True)
     
+    pending_seller_fee = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Seller escrow fee locked in at accept_offer time. Used by confirm_agreement.',
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

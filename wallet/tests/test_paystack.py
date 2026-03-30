@@ -165,11 +165,11 @@ class PaystackIntegrationTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
-        # Verify transaction creation (FIX 3: We always create a new transaction for DVA)
-        # The old 'tx' remains PENDING and is ignored.
-        new_tx = Transaction.objects.get(external_reference='ref_paystack_external')
-        self.assertEqual(new_tx.status, 'SUCCESSFUL')
-        self.assertEqual(new_tx.amount, 4900) # 5000 - 100
+        # Verify transaction update
+        tx.refresh_from_db()
+        self.assertEqual(tx.status, 'SUCCESSFUL')
+        self.assertEqual(tx.external_reference, 'ref_paystack_external')
+        self.assertEqual(tx.amount, 4900) # 5000 - 100
         
         # Verify wallet balance
         wallet.refresh_from_db()

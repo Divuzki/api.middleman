@@ -147,7 +147,7 @@ class PayoutAccount(models.Model):
     # Crypto Fields
     wallet_address = models.CharField(max_length=255, blank=True, null=True)
     network = models.CharField(max_length=50, blank=True, null=True)
-
+    
     # FIX 5: Cached Paystack recipient code.
     # Populated on first withdrawal; reused on all subsequent withdrawals.
     # Cleared automatically if the bank details change (override save() below).

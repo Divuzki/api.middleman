@@ -1,3 +1,23 @@
+"""
+agreement/services.py  –  MIDDLEMAN  (patched)
+===============================================
+Change vs original:
+  FIX 2 – Escrow fee (3.5%) is now actually collected.
+
+  accept_offer  → buyer pays offer_amount + buyer_fee (at funding time)
+  confirm_agreement → seller receives offer_amount − seller_fee (at release)
+
+  The fee split is determined by Agreement.fee_payer:
+    'me'    = initiator pays all        (resolved to buyer or seller by creator_role)
+    'other' = counterparty pays all     (opposite of 'me')
+    'split' = 50/50 (1.75% each side)
+
+── CONFIG ─────────────────────────────────────────────────────────────────────
+  Change ESCROW_FEE_RATE and PLATFORM_FEE_WALLET_USER_ID in settings.py.
+  Everything else here is automatic.
+──────────────────────────────────────────────────────────────────────────────
+"""
+
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
