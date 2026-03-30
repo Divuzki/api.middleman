@@ -37,15 +37,15 @@ class WalletEngineTests(TestCase):
         self.assertEqual(self.wallet.balance, Decimal('1000.00'))
         
         # Update to SUCCESSFUL
-        tx.status = 'SUCCESSFUL'
-        tx.save()
+        from wallet.services import WalletEngine
+        WalletEngine.approve_transaction(tx.pk)
         
         # Verify balance updated
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1500.00'))
         
-        # Idempotency check: Save again shouldn't add more
-        tx.save()
+        # Idempotency check: Call again shouldn't add more
+        WalletEngine.approve_transaction(tx.pk)
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1500.00'))
 
@@ -66,8 +66,8 @@ class WalletEngineTests(TestCase):
         self.assertEqual(self.wallet.balance, Decimal('1000.00'))
         
         # Update to SUCCESSFUL
-        tx.status = 'SUCCESSFUL'
-        tx.save()
+        from wallet.services import WalletEngine
+        WalletEngine.approve_transaction(tx.pk)
         
         # Verify balance updated
         self.wallet.refresh_from_db()
@@ -86,9 +86,9 @@ class WalletEngineTests(TestCase):
         )
         
         # Try to update to SUCCESSFUL -> Should fail
-        tx.status = 'SUCCESSFUL'
+        from wallet.services import WalletEngine
         with self.assertRaises(ValidationError):
-            tx.save()
+            WalletEngine.approve_transaction(tx.pk)
             
         # Verify balance unchanged
         self.wallet.refresh_from_db()

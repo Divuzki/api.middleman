@@ -147,6 +147,11 @@ class PayoutAccount(models.Model):
     # Crypto Fields
     wallet_address = models.CharField(max_length=255, blank=True, null=True)
     network = models.CharField(max_length=50, blank=True, null=True)
+
+    # FIX 5: Cached Paystack recipient code.
+    # Populated on first withdrawal; reused on all subsequent withdrawals.
+    # Cleared automatically if the bank details change (override save() below).
+    paystack_recipient_code = models.CharField(max_length=100, blank=True, null=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -154,6 +159,19 @@ class PayoutAccount(models.Model):
         if self.type == 'bank':
             return f"{self.bank_name} - {self.account_number}"
         return f"{self.network} - {self.wallet_address}"
+
+    def save(self, *args, **kwargs):
+        # If bank details changed, invalidate the cached recipient code
+        # so a fresh one is created on the next withdrawal.
+        if self.pk:
+            try:
+                old = PayoutAccount.objects.get(pk=self.pk)
+                if (old.account_number != self.account_number or
+                        old.bank_code != self.bank_code):
+                    self.paystack_recipient_code = None
+            except PayoutAccount.DoesNotExist:
+                pass
+        super().save(*args, **kwargs)
 
 
 class DeviceProfile(models.Model):

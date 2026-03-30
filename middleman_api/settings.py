@@ -447,3 +447,18 @@ ANYMAIL = {
 }
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@midman.app")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "main@midman.app")
+
+# ── Wallet / Withdrawal ───────────────────────────────────────────────
+# Flat NGN fee deducted from every withdrawal (user receives amount - fee).
+WITHDRAWAL_COMMISSION_FEE = 300
+
+# User.id of your internal platform account.
+# Escrow fees and withdrawal commissions are credited to this wallet.
+# Set to None to skip internal crediting (fees stay in Paystack balance).
+PLATFORM_FEE_WALLET_USER_ID = None  # e.g. 1 if your admin user is id=1
+
+# ── Escrow ────────────────────────────────────────────────────────────
+# 3.5% escrow fee on every completed agreement.
+# Split mode charges each side half (1.75%).
+ESCROW_FEE_RATE = '0.035'
+

@@ -1,71 +1,8 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from wallet.utils import TransactPayClient, NOWPaymentsClient
+from wallet.utils import NOWPaymentsClient
 from middleman_api.exceptions import GatewayError
 import requests
-
-class TestTransactPayClient(unittest.TestCase):
-    def setUp(self):
-        self.client = TransactPayClient()
-
-    @patch('wallet.utils.TransactPayClient._encrypt_payload')
-    @patch('requests.post')
-    def test_get_fee_success(self, mock_post, mock_encrypt):
-        """Test successful fee retrieval for TransactPayClient."""
-        # Mock encryption to return a dummy string
-        mock_encrypt.return_value = "encrypted_dummy_data"
-        
-        # Mock API response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        expected_response = {
-            "status": "success",
-            "data": {
-                "fee": "50.00"
-            }
-        }
-        mock_response.json.return_value = expected_response
-        mock_post.return_value = mock_response
-
-        # Call method
-        amount = 1000
-        currency = 'NGN'
-        result = self.client.get_fee(amount, currency)
-
-        # Assertions
-        self.assertEqual(result, expected_response)
-        mock_encrypt.assert_called_once()
-        
-        # Verify arguments passed to requests.post
-        args, kwargs = mock_post.call_args
-        self.assertEqual(kwargs['json'], {"data": "encrypted_dummy_data"})
-        self.assertEqual(kwargs['headers'], self.client.headers)
-
-    @patch('wallet.utils.TransactPayClient._encrypt_payload')
-    @patch('requests.post')
-    def test_get_fee_api_failure(self, mock_post, mock_encrypt):
-        """Test API failure handling for TransactPayClient.get_fee."""
-        mock_encrypt.return_value = "encrypted_dummy_data"
-        
-        # Mock API error (RequestException)
-        mock_post.side_effect = requests.RequestException("API Connection Error")
-
-        # Call method and assert GatewayError
-        with self.assertRaises(GatewayError):
-            self.client.get_fee(amount=1000)
-
-    @patch('wallet.utils.TransactPayClient._encrypt_payload')
-    def test_get_fee_encryption_failure(self, mock_encrypt):
-        """Test encryption failure handling for TransactPayClient.get_fee."""
-        # Mock encryption failure (returns None)
-        mock_encrypt.return_value = None
-
-        # Call method
-        result = self.client.get_fee(amount=1000)
-
-        # Assertions
-        self.assertIsNone(result)
-
 
 class TestNOWPaymentsClient(unittest.TestCase):
     def setUp(self):

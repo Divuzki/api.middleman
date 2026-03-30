@@ -97,23 +97,10 @@ class DepositView(APIView):
                         "total_charged": total_charged
                     })
 
-                    # Create Pending Transaction
-                    Transaction.objects.create(
-                        wallet=wallet,
-                        title="Deposit",
-                        amount=converted.get('amount_ngn') or amount,
-                        amount_usd=converted.get('amount_usd'),
-                        amount_ngn=converted.get('amount_ngn'),
-                        transaction_type='DEPOSIT',
-                        category='Deposit',
-                        status='PENDING',
-                        reference=ref,
-                        icon='savings',
-                        payment_method='PAYSTACK',
-                        payment_currency='NGN'
-                    )
-                    
-                    response_data['reference'] = ref
+                    # FIX 3: We no longer create a pending transaction for DVA deposits.
+                    # The webhook creates the authoritative transaction directly.
+                    # (Old logic that created a pending transaction by amount matched 
+                    # incorrectly because the webhook sends the gross amount).
 
                     # Paystack Dedicated Virtual Account Logic
                     client = PaystackClient()
@@ -325,75 +312,82 @@ class DepositView(APIView):
         
         raise ValidationError("Invalid amount")
 
+# ── FIX 2: WithdrawalView ──────────────────────────────────────────────────────
 class WithdrawalView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = WithdrawalSerializer(data=request.data)
-        if serializer.is_valid():
-            amount = serializer.validated_data['amount']
-            currency = serializer.validated_data.get('currency', 'NGN')
-            pin = serializer.validated_data['pin']
-            account_id = serializer.validated_data['accountId']
+        if not serializer.is_valid():
+            raise ValidationError("Invalid data")
 
-            # Verify PIN (using the User model in default DB)
-            user = request.user
-            if not user.transaction_pin or not user.verify_pin(pin):
-                raise ValidationError("Invalid PIN")
+        amount     = serializer.validated_data['amount']
+        currency   = serializer.validated_data.get('currency', 'NGN')
+        pin        = serializer.validated_data['pin']
+        account_id = serializer.validated_data['accountId']
 
-            # Check Balance
-            wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
-            if wallet.balance < amount:
-                raise ValidationError("Insufficient funds")
-            
-            # Get Payout Account
-            from users.models import PayoutAccount
-            try:
-                # Strip prefix if present
-                clean_account_id = str(account_id).replace('acc_', '')
-                payout_account = PayoutAccount.objects.get(id=clean_account_id, user=user)
-            except (PayoutAccount.DoesNotExist, ValueError):
-                raise ValidationError("Invalid payout account")
-            
-            # Calculate USD/NGN amounts
-            converted = get_converted_amounts(amount, currency)
+        user = request.user
+        if not user.transaction_pin or not user.verify_pin(pin):
+            raise ValidationError("Invalid PIN")
 
-            # Create Transaction
-            tx_id = f"tx_{uuid.uuid4().hex[:12]}"
-            tx = Transaction.objects.create(
-                wallet=wallet,
-                title="Withdrawal",
-                amount=converted.get('amount_ngn') or amount,
-                amount_usd=converted.get('amount_usd'),
-                amount_ngn=converted.get('amount_ngn'),
-                transaction_type='WITHDRAWAL',
-                category='Withdrawal',
-                status='PENDING',
-                reference=tx_id,
-                description=f"Withdrawal to account {payout_account.bank_name}",
-                icon='cash-outline'
+        wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
+
+        # ── FIX 2 ──────────────────────────────────────────────────────────────
+        # Previously only checked wallet.balance < amount.
+        # The commission (300 NGN) is also deducted, so we check the full debit.
+        commission_fee = Decimal(str(getattr(settings, 'WITHDRAWAL_COMMISSION_FEE', 300)))
+
+        if amount <= commission_fee:
+            raise ValidationError(
+                f"Minimum withdrawal amount is ₦{commission_fee + 1:,.0f} "
+                f"(₦{commission_fee:,.0f} processing fee applies)."
             )
 
-            # Process Payout
-            try:
-                PayoutService.process_payout(tx, payout_account)
-            except ValueError as ve:
-                logger.error(f"Payout validation failed for {tx_id}: {ve}")
-                tx.status = 'FAILED'
-                tx.save()
-                raise ValidationError(str(ve))
-            except Exception as e:
-                logger.error(f"Payout failed for {tx_id}: {e}")
-                tx.status = 'FAILED'
-                tx.save()
-                raise APIException("Payout processing failed")
+        if wallet.balance < amount:
+            raise ValidationError("Insufficient funds.")
+        # ─────────────────────────────────────────────────────────────────────
 
-            return StandardResponse(
-                data={"transactionId": tx_id},
-                message="Withdrawal processed successfully"
-            )
+        from users.models import PayoutAccount
+        try:
+            clean_id = str(account_id).replace('acc_', '')
+            payout_account = PayoutAccount.objects.get(id=clean_id, user=user)
+        except (PayoutAccount.DoesNotExist, ValueError):
+            raise ValidationError("Invalid payout account.")
 
-        raise ValidationError("Invalid data")
+        converted = get_converted_amounts(amount, currency)
+        tx_id = f"tx_{uuid.uuid4().hex[:12]}"
+
+        tx = Transaction.objects.create(
+            wallet=wallet,
+            title="Withdrawal",
+            amount=amount,
+            amount_usd=converted.get('amount_usd'),
+            amount_ngn=converted.get('amount_ngn'),
+            transaction_type='WITHDRAWAL',
+            category='Withdrawal',
+            status='PENDING',
+            reference=tx_id,
+            description=f"Withdrawal to {payout_account.bank_name}",
+            icon='cash-outline'
+        )
+
+        try:
+            PayoutService.process_payout(tx, payout_account)
+        except ValueError as ve:
+            logger.error(f"Payout validation failed for {tx_id}: {ve}")
+            tx.status = 'FAILED'
+            tx.save()
+            raise ValidationError(str(ve))
+        except Exception as e:
+            logger.error(f"Payout failed for {tx_id}: {e}")
+            tx.status = 'FAILED'
+            tx.save()
+            raise APIException("Payout processing failed.")
+
+        return StandardResponse(
+            data={"transactionId": tx.reference},  # note: reference may have been updated to Paystack ref
+            message="Withdrawal initiated. You will be notified once confirmed."
+        )
 
 class TransactionListView(ListAPIView):
     permission_classes = [IsAuthenticated]
@@ -508,188 +502,189 @@ class VerifyDepositView(GenericAPIView):
             }
         )
 
+# ── FIX 1 + FIX 3: PaystackWebhookView ────────────────────────────────────────
 class PaystackWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # 1. Verify Signature
-        secret = settings.PAYSTACK_SECRET_KEY
+        # ── Signature verification (unchanged) ───────────────────────────────
+        secret    = settings.PAYSTACK_SECRET_KEY
         signature = request.headers.get('x-paystack-signature')
-        
+
         if not signature:
-             return Response(status=status.HTTP_400_BAD_REQUEST)
-             
-        payload = request.body
-        computed_sig = hmac.new(
-            key=secret.encode('utf-8'),
-            msg=payload,
-            digestmod=hashlib.sha512
-        ).hexdigest()
-        
-        if computed_sig != signature:
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Process Event
+        computed_sig = hmac.new(
+            key=secret.encode('utf-8'),
+            msg=request.body,
+            digestmod=hashlib.sha512
+        ).hexdigest()
+
+        if computed_sig != signature:
+            logger.warning("Paystack webhook: invalid signature.")
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        # ── Route to the correct handler ─────────────────────────────────────
         event = request.data.get('event')
-        data = request.data.get('data', {})
-        
-        if event == 'charge.success':
-            print(request.data)
-            reference = data.get('reference')
-            amount_kobo = data.get('amount', 0)
-            fees_kobo = data.get('fees', 0)
-            
-            # Calculate net amount
-            net_amount_kobo = amount_kobo - fees_kobo
-            net_amount_ngn = net_amount_kobo / 100.0
-            
-            # Extract Authorization details for DVA and Notification
-            authorization = data.get('authorization', {})
-            channel = data.get('channel')
-            receiver_account = authorization.get('receiver_bank_account_number')
-            
-            # Prepare notification details
-            notification_title = None
-            notification_body = None
-            
-            if channel == 'dedicated_nuban':
-                sender_name = authorization.get('sender_name', 'Someone')
-                sender_bank = authorization.get('sender_bank', 'Bank')
-                
-                # Format amount
-                # Since we don't have wallet object yet, we can't check currency, 
-                # but Paystack DVA is typically NGN.
-                amount_fmt = f"₦{net_amount_ngn:,.2f}"
-                
-                notification_title = f"{sender_name} sent {amount_fmt} to your wallet"
-                notification_body = f"Transfer from {sender_bank}. Reference: {reference}"
+        data  = request.data.get('data', {})
 
-            # Idempotency check
-            if Transaction.objects.filter(external_reference=reference).exists():
-                return Response(status=status.HTTP_200_OK)
-            
-            # Also check if reference matches internal reference (in case we passed it)
-            if Transaction.objects.filter(reference=reference).exists():
-                # If it exists by internal reference, we should check if it's already successful
-                tx = Transaction.objects.get(reference=reference)
-                if tx.status == 'SUCCESSFUL':
-                    return Response(status=status.HTTP_200_OK)
-                # If pending, we proceed to update it (logic below might handle this if we fall through, 
-                # but better to handle explicit reference match here)
-                
-                # Update amount to net amount if different? 
-                # The user said "calculate net amount and use that".
-                tx.amount = net_amount_ngn
-                tx.amount_ngn = net_amount_ngn
-                
-                # Update description if DVA info available
-                if notification_body:
-                    tx.description = notification_body
-                    
-                # Let's just update and approve.
-                tx.save()
-                WalletEngine.approve_transaction(
-                    tx.pk, 
-                    notification_title=notification_title, 
-                    notification_body=notification_body
-                )
-                return Response(status=status.HTTP_200_OK)
+        try:
+            if event == 'charge.success':
+                self._handle_charge_success(data)
 
-            email = data.get('customer', {}).get('email')
-            
-            try:
-                # Find User
-                user = None
-                
-                # Priority 1: DVA Account Number
-                if receiver_account:
-                    user = User.objects.filter(virtual_account_number=receiver_account).first()
+            # ── FIX 1: Handle transfer outcomes ──────────────────────────────
+            elif event == 'transfer.success':
+                self._handle_transfer_success(data)
 
-                # Priority 2: Email
-                if not user:
-                    user = User.objects.filter(email=email).first()
-                
-                # Priority 3: Customer Code
-                if not user:
-                    customer_code = data.get('customer', {}).get('customer_code')
-                    if customer_code:
-                         user = User.objects.filter(paystack_customer_code=customer_code).first()
-                
-                if not user:
-                    logger.error(f"Paystack Webhook: User not found for email {email} or DVA {receiver_account}")
-                    return Response(status=status.HTTP_200_OK)
+            elif event in ('transfer.failed', 'transfer.reversed'):
+                self._handle_transfer_failed(data, event)
+            # ─────────────────────────────────────────────────────────────────
 
-                wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
-                
-                # Match Pending Transaction
-                # Criteria: User, Amount (gross or net? usually we store gross in pending deposit, but user might have meant what they transferred),
-                # Time window (24 hours).
-                # Note: The pending transaction created by DepositView has 'amount' = what user wants to deposit.
-                # If user wants to deposit 1000, they pay 1000 + fees (if bearer=depositor) or 1000 (if bearer=merchant).
-                # Paystack amount is what was charged.
-                # Let's assume the pending transaction amount matches the charged amount (gross).
-                amount_charged_ngn = amount_kobo / 100.0
-                
-                time_threshold = timezone.now() - timedelta(hours=24)
-                
-                pending_tx = Transaction.objects.filter(
-                    wallet=wallet,
-                    amount=amount_charged_ngn, # Match by gross amount charged
-                    status='PENDING',
-                    transaction_type='DEPOSIT',
-                    created_at__gte=time_threshold,
-                    external_reference__isnull=True # Don't double match
-                ).order_by('-created_at').first()
-                
-                if pending_tx:
-                    # Update matched transaction
-                    pending_tx.external_reference = reference
-                    pending_tx.amount = net_amount_ngn
-                    pending_tx.amount_ngn = net_amount_ngn
-                    if notification_body:
-                        pending_tx.description = notification_body
-                    pending_tx.save()
-                    
-                    WalletEngine.approve_transaction(
-                        pending_tx.pk,
-                        notification_title=notification_title,
-                        notification_body=notification_body
-                    )
-                    
-                else:
-                    # Create new transaction
-                    # We need converted amounts for USD field
-                    converted = get_converted_amounts(net_amount_ngn, 'NGN')
-                    
-                    new_ref = f"ref_{uuid.uuid4().hex[:12]}"
-                    
-                    tx = Transaction.objects.create(
-                        wallet=wallet,
-                        title="Deposit",
-                        amount=net_amount_ngn,
-                        amount_usd=converted.get('amount_usd'),
-                        amount_ngn=net_amount_ngn,
-                        transaction_type='DEPOSIT',
-                        category='Deposit',
-                        status='PENDING', # Create as pending first
-                        reference=new_ref,
-                        external_reference=reference,
-                        payment_method='PAYSTACK',
-                        payment_currency='NGN',
-                        description=notification_body or "Deposit via Paystack Webhook"
-                    )
-                    
-                    WalletEngine.approve_transaction(
-                        tx.pk,
-                        notification_title=notification_title,
-                        notification_body=notification_body
-                    )
-                
-            except Exception as e:
-                logger.error(f"Paystack Webhook Error: {e}")
-                return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Paystack webhook error [{event}]: {e}", exc_info=True)
+            # Always return 200 so Paystack doesn't retry infinitely.
+            # Log the error and investigate manually.
+            return Response(status=status.HTTP_200_OK)
 
         return Response(status=status.HTTP_200_OK)
+
+    # ── charge.success ────────────────────────────────────────────────────────
+    def _handle_charge_success(self, data):
+        """
+        Handles inbound DVA deposits.
+
+        FIX 3: We no longer try to match a pending transaction by amount
+        (the old matching logic was broken – net vs gross mismatch).
+        We always create a fresh transaction from the webhook data.
+        The DepositView no longer creates a pending transaction for DVA deposits.
+        """
+        reference    = data.get('reference')
+        amount_kobo  = data.get('amount', 0)
+        fees_kobo    = data.get('fees', 0)
+        channel      = data.get('channel')
+        authorization = data.get('authorization', {})
+        receiver_account = authorization.get('receiver_bank_account_number')
+
+        net_amount_ngn = (amount_kobo - fees_kobo) / 100.0
+
+        # ── Idempotency ───────────────────────────────────────────────────────
+        if Transaction.objects.filter(external_reference=reference).exists():
+            logger.info(f"charge.success {reference} already processed. Skipping.")
+            return
+
+        # ── Build push notification text ──────────────────────────────────────
+        notification_title = None
+        notification_body  = None
+        if channel == 'dedicated_nuban':
+            sender_name  = authorization.get('sender_name', 'Someone')
+            sender_bank  = authorization.get('sender_bank', 'your bank')
+            amount_fmt   = f"₦{net_amount_ngn:,.2f}"
+            notification_title = f"{sender_name} sent {amount_fmt} to your wallet"
+            notification_body  = f"Transfer from {sender_bank}. Ref: {reference}"
+
+        # ── Find the wallet owner ─────────────────────────────────────────────
+        user = None
+        if receiver_account:
+            user = User.objects.filter(virtual_account_number=receiver_account).first()
+        if not user:
+            email = data.get('customer', {}).get('email')
+            user  = User.objects.filter(email=email).first()
+        if not user:
+            customer_code = data.get('customer', {}).get('customer_code')
+            if customer_code:
+                user = User.objects.filter(paystack_customer_code=customer_code).first()
+        if not user:
+            logger.error(f"charge.success {reference}: could not identify user. DVA: {receiver_account}")
+            return
+
+        wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
+        converted = get_converted_amounts(net_amount_ngn, 'NGN')
+
+        # ── Create and immediately approve the transaction ────────────────────
+        new_ref = f"ref_{uuid.uuid4().hex[:12]}"
+        tx = Transaction.objects.create(
+            wallet=wallet,
+            title="Deposit",
+            amount=net_amount_ngn,
+            amount_ngn=net_amount_ngn,
+            amount_usd=converted.get('amount_usd'),
+            transaction_type='DEPOSIT',
+            category='Deposit',
+            status='PENDING',
+            reference=new_ref,
+            external_reference=reference,
+            payment_method='PAYSTACK',
+            payment_currency='NGN',
+            description=notification_body or "Deposit via Paystack DVA",
+            icon='savings',
+        )
+
+        WalletEngine.approve_transaction(
+            tx.pk,
+            notification_title=notification_title,
+            notification_body=notification_body,
+        )
+        logger.info(f"charge.success {reference}: credited ₦{net_amount_ngn:,.2f} to wallet {wallet.pk}.")
+
+    # ── transfer.success ──────────────────────────────────────────────────────
+    def _handle_transfer_success(self, data):
+        """
+        Paystack confirmed a payout. Mark the withdrawal SUCCESSFUL.
+        """
+        reference = data.get('reference')
+        if not reference:
+            logger.error("transfer.success webhook: no reference in payload.")
+            return
+
+        try:
+            txn = Transaction.objects.get(
+                reference=reference,
+                transaction_type='WITHDRAWAL',
+            )
+        except Transaction.DoesNotExist:
+            logger.error(f"transfer.success: no withdrawal found for ref {reference}")
+            return
+
+        if txn.status == 'SUCCESSFUL':
+            logger.info(f"transfer.success {reference}: already SUCCESSFUL. Skipping.")
+            return
+
+        txn.status = 'SUCCESSFUL'
+        txn.save()
+        logger.info(f"transfer.success {reference}: withdrawal marked SUCCESSFUL.")
+
+        # Notify user
+        wallet = txn.wallet
+        user = User.objects.filter(pk=wallet.user_id).first()
+        if user:
+            send_notification_safe(
+                user,
+                "Withdrawal Successful",
+                f"Your withdrawal of ₦{txn.amount:,.2f} has been sent to your bank."
+            )
+
+    # ── transfer.failed / transfer.reversed ───────────────────────────────────
+    def _handle_transfer_failed(self, data, event_name):
+        """
+        Paystack could not complete the payout.
+        Reverse the wallet debit so the user gets their funds back.
+        """
+        reference = data.get('reference')
+        if not reference:
+            logger.error(f"{event_name} webhook: no reference in payload.")
+            return
+
+        logger.warning(f"{event_name} received for ref {reference}. Reversing withdrawal.")
+        WalletEngine.reverse_withdrawal(reference)
+
+
+# ── safe notification helper (won't crash the webhook if push fails) ──────────
+def send_notification_safe(user, title, body):
+    try:
+        from users.notifications import send_standard_notification
+        send_standard_notification(user, title, body)
+    except Exception as e:
+        logger.error(f"Push notification failed for user {user.pk}: {e}")
 
 class NOWPaymentsWebhookView(APIView):
     permission_classes = [AllowAny]

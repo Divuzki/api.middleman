@@ -1,58 +1,171 @@
+from decimal import Decimal, ROUND_HALF_UP
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
 from .models import Agreement, AgreementOffer, ChatMessage
 from wallet.models import Wallet, Transaction
 from users.notifications import notify_balance_update
 from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ── CONFIG ─── Change these two values in settings.py, not here ──────────────
+#
+#   ESCROW_FEE_RATE  (Decimal string, default "0.035" = 3.5%)
+#       The escrow fee charged on every completed agreement.
+#       For split mode: each side pays ESCROW_FEE_RATE / 2.
+#
+#   PLATFORM_FEE_WALLET_USER_ID  (int | None)
+#       User.id of your internal platform account.
+#       If set, escrow fees are credited to that user's wallet so you can
+#       track accumulated escrow revenue in-app.
+#       If None, fees are just logged (they stay in the overall Paystack
+#       balance as natural profit).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_escrow_fee_rate() -> Decimal:
+    raw = getattr(settings, 'ESCROW_FEE_RATE', '0.035')
+    return Decimal(str(raw))
+
+
+def _round_money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def _resolve_fee_payer(agreement) -> str:
+    """
+    Resolves the relative fee_payer ('me'/'other') to an absolute role
+    ('buyer' / 'seller' / 'split') so the rest of the logic is role-based.
+
+    creator_role  fee_payer   → resolved
+    buyer         me          → buyer
+    buyer         other       → seller
+    seller        me          → seller
+    seller        other       → buyer
+    *             split       → split
+    """
+    if agreement.fee_payer == 'split':
+        return 'split'
+    if agreement.creator_role == 'buyer':
+        return 'buyer' if agreement.fee_payer == 'me' else 'seller'
+    else:  # creator_role == 'seller'
+        return 'seller' if agreement.fee_payer == 'me' else 'buyer'
+
+
+def _calculate_fees(offer_amount: Decimal, fee_payer: str) -> tuple[Decimal, Decimal]:
+    """
+    Returns (buyer_fee, seller_fee) in agreement currency.
+
+    buyer_fee  – extra amount the buyer pays on top of offer_amount
+    seller_fee – amount deducted from offer_amount when releasing to seller
+    """
+    rate = _get_escrow_fee_rate()
+
+    if fee_payer == 'buyer':
+        return _round_money(offer_amount * rate), Decimal('0')
+    elif fee_payer == 'seller':
+        return Decimal('0'), _round_money(offer_amount * rate)
+    else:  # split
+        half = _round_money(offer_amount * rate / 2)
+        return half, half
+
+
+def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str):
+    """
+    Credits the platform fee wallet (if configured) after a successful
+    escrow collection.  Never raises – logs any errors silently so it
+    never blocks the main agreement flow.
+    """
+    platform_user_id = getattr(settings, 'PLATFORM_FEE_WALLET_USER_ID', None)
+    if not platform_user_id or fee_amount <= 0:
+        if fee_amount > 0:
+            import logging
+            logging.getLogger(__name__).info(
+                f"Escrow fee ₦{fee_amount} for {source_ref} not credited "
+                f"(PLATFORM_FEE_WALLET_USER_ID not set)."
+            )
+        return
+
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        with transaction.atomic(using='wallet_db'):
+            platform_wallet, _ = Wallet.objects.get_or_create(user_id=platform_user_id)
+            platform_wallet.balance += fee_amount
+            platform_wallet.save()
+
+            converted = get_converted_amounts(fee_amount, 'NGN')
+            Transaction.objects.create(
+                wallet=platform_wallet,
+                title="Escrow Fee",
+                amount=fee_amount,
+                amount_ngn=fee_amount,
+                amount_usd=converted.get('amount_usd'),
+                transaction_type='DEPOSIT',
+                category='Escrow Fee',
+                status='SUCCESSFUL',
+                reference=f"escrow_fee_{uuid.uuid4().hex[:10]}",
+                description=description,
+                payment_currency='NGN',
+            )
+            logger.info(f"Escrow fee ₦{fee_amount} credited to platform wallet. {source_ref}")
+    except Exception as e:
+        logger.error(f"Failed to credit platform escrow fee for {source_ref}: {e}")
+
+
 def get_user_name(user):
     return user.first_name or user.email.split('@')[0]
 
 
 class AgreementService:
+
+    # ── join ──────────────────────────────────────────────────────────────────
     @staticmethod
     def join_agreement(user, agreement, return_msg=False):
         if agreement.initiator == user:
             raise ValueError("Initiator cannot join their own agreement")
-        
-        # Use transaction to prevent race conditions
+
         with transaction.atomic(using='agreement_db'):
-            # Lock the agreement row
             agreement_locked = Agreement.objects.select_for_update().get(id=agreement.id)
-            
+
             if agreement_locked.counterparty and agreement_locked.counterparty != user:
                 raise ValueError("Agreement already has a counterparty")
-            
+
             agreement_locked.counterparty = user
             if agreement_locked.creator_role == 'buyer':
                 agreement_locked.seller = user
             else:
                 agreement_locked.buyer = user
-                
+
             agreement_locked.status = 'awaiting_acceptance'
             agreement_locked.save()
-            
+
             msg = ChatMessage.objects.create(
                 agreement=agreement_locked,
                 sender=user,
                 text=f"{get_user_name(user)} joined agreement",
                 message_type='system'
             )
-            
+
             if return_msg:
                 return agreement_locked, msg
             return agreement_locked
 
+    # ── accept_offer (buyer funds escrow) ─────────────────────────────────────
     @staticmethod
     def accept_offer(user, agreement, offer, pin=None):
         """
-        Handles offer acceptance logic for both Buyer and Seller.
+        FIX 2: Buyer now pays offer_amount + buyer_fee (if buyer carries any fee).
+        The buyer_fee is collected here; seller_fee is collected at confirm_agreement.
         """
-        is_buyer = user == agreement.buyer
+        is_buyer  = user == agreement.buyer
         is_seller = user == agreement.seller
-        
+
         if not (is_buyer or is_seller):
             raise ValueError("Not a participant")
 
@@ -61,35 +174,40 @@ class AgreementService:
                 raise ValueError("PIN required for buyer to accept/fund")
             if user.transaction_pin and not user.verify_pin(pin):
                 raise ValueError("Incorrect PIN")
-            
-            # Lock Agreement First (Agreement DB)
+
             with transaction.atomic(using='agreement_db'):
                 agreement_locked = Agreement.objects.select_for_update().get(id=agreement.id)
-                
-                # Check if already active/secured to prevent double funding
+
                 if agreement_locked.status in ['active', 'secured', 'delivered', 'completed']:
-                     raise ValueError("Agreement is already active")
+                    raise ValueError("Agreement is already active")
+
+                fee_payer = _resolve_fee_payer(agreement_locked)
+                offer_amount = Decimal(str(offer.amount))
+                buyer_fee, seller_fee = _calculate_fees(offer_amount, fee_payer)
+
+                # Total the buyer must have in their wallet
+                total_buyer_debit = offer_amount + buyer_fee
 
                 with transaction.atomic(using='wallet_db'):
                     try:
-                        # Lock rows to prevent race conditions
                         buyer_wallet = Wallet.objects.select_for_update().get(user_id=user.id)
                     except Wallet.DoesNotExist:
                         raise ValueError("Buyer wallet not found")
 
-                    # Convert offer amount (agreement currency) to wallet currency
-                    wallet_amount = convert_currency(offer.amount, agreement.currency, buyer_wallet.currency)
+                    wallet_amount = convert_currency(
+                        total_buyer_debit, agreement.currency, buyer_wallet.currency
+                    )
                     if wallet_amount is None:
-                         raise ValueError(f"Currency conversion failed from {agreement.currency} to {buyer_wallet.currency}")
+                        raise ValueError(
+                            f"Currency conversion failed: {agreement.currency} → {buyer_wallet.currency}"
+                        )
 
                     if buyer_wallet.balance < wallet_amount:
                         raise ValueError("Insufficient funds in wallet")
-                    
-                    # Debit Wallet
+
                     buyer_wallet.balance -= wallet_amount
                     buyer_wallet.save()
-                    
-                    # Create Transaction Record
+
                     converted = get_converted_amounts(wallet_amount, buyer_wallet.currency)
                     Transaction.objects.create(
                         wallet=buyer_wallet,
@@ -97,80 +215,108 @@ class AgreementService:
                         amount=wallet_amount,
                         amount_usd=converted.get('amount_usd'),
                         amount_ngn=converted.get('amount_ngn'),
-                        transaction_type='AGREEMENT_PAYMENT', # Using new type if available, else TRANSFER
+                        transaction_type='AGREEMENT_PAYMENT',
                         category='Escrow Lock',
                         status='SUCCESSFUL',
                         reference=f"escrow_lock_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                        description=f"Funds locked for agreement {agreement.id}",
-                        payment_currency=agreement.currency
+                        description=(
+                            f"Escrow funded: ₦{offer_amount:,.2f} + "
+                            f"₦{buyer_fee:,.2f} escrow fee ({fee_payer})"
+                        ),
+                        payment_currency=agreement.currency,
                     )
-                    
-                    # Notify buyer of balance update (Debit)
-                    transaction.on_commit(lambda: notify_balance_update(user), using='wallet_db')
-                    
-                    # Update Agreement (using locked instance)
-                    # Note: We keep agreement amounts in original currency/values
-                    # But we might want to update USD/NGN values based on current rates
-                    offer_converted = get_converted_amounts(offer.amount, agreement.currency)
-                    
-                    agreement_locked.amount = offer.amount
-                    agreement_locked.amount_usd = offer_converted.get('amount_usd')
-                    agreement_locked.amount_ngn = offer_converted.get('amount_ngn')
-                    agreement_locked.timeline = offer.timeline
-                    agreement_locked.status = 'active'
-                    agreement_locked.secured_at = timezone.now()
-                    agreement_locked.active_offer = offer
+
+                    transaction.on_commit(
+                        lambda: notify_balance_update(user), using='wallet_db'
+                    )
+
+                    # If buyer paid a fee, credit platform now
+                    if buyer_fee > 0:
+                        _credit_platform_fee(
+                            buyer_fee,
+                            description=f"Buyer escrow fee – agreement {agreement.id}",
+                            source_ref=f"escrow_lock_{agreement.id}",
+                        )
+
+                    # Store the seller_fee on the agreement so confirm_agreement can use it
+                    # without re-calculating (rate might change between now and release).
+                    offer_converted = get_converted_amounts(offer_amount, agreement.currency)
+                    agreement_locked.amount       = offer_amount
+                    agreement_locked.amount_usd   = offer_converted.get('amount_usd')
+                    agreement_locked.amount_ngn   = offer_converted.get('amount_ngn')
+                    agreement_locked.timeline      = offer.timeline
+                    agreement_locked.status        = 'active'
+                    agreement_locked.secured_at    = timezone.now()
+                    agreement_locked.active_offer  = offer
+                    # Store pending seller fee so confirm_agreement can use it
+                    # (avoids re-calculating with potentially updated rate)
+                    agreement_locked.pending_seller_fee = seller_fee
                     agreement_locked.save()
-                    
-                    # Update Offer
+
                     offer.status = 'accepted'
                     offer.save()
-                    
+
                     msg = ChatMessage.objects.create(
                         agreement=agreement_locked,
                         sender=user,
                         text=f"{get_user_name(user)} funded escrow",
                         message_type='system'
                     )
-                    
-                    # Return updated objects
+
                     return agreement_locked, offer, msg
-                
+
         elif is_seller:
             offer.status = 'accepted_by_seller'
             offer.save()
-            msg = None
-            
-        return agreement, offer, msg
 
+        return agreement, offer, None
+
+    # ── confirm_agreement (buyer confirms delivery → release funds to seller) ──
     @staticmethod
     def confirm_agreement(user, agreement):
         """
-        Handles agreement confirmation (delivery confirmation) by Buyer.
-        Releases funds to Seller.
+        FIX 2: Seller receives offer_amount − seller_fee.
+        The seller_fee was locked in at accept_offer time (stored as
+        agreement.pending_seller_fee) to avoid rate-drift.
         """
         if agreement.buyer != user:
             raise ValueError("Only buyer can confirm agreement")
-        
+
         if agreement.status != 'delivered':
-             raise ValueError("Agreement must be delivered to confirm")
+            raise ValueError("Agreement must be in 'delivered' status to confirm")
 
         with transaction.atomic(using='wallet_db'):
             try:
-                seller_wallet = Wallet.objects.select_for_update().get(user_id=agreement.seller.id)
+                seller_wallet = Wallet.objects.select_for_update().get(
+                    user_id=agreement.seller.id
+                )
             except Wallet.DoesNotExist:
                 raise ValueError("Seller wallet not found")
 
-            # Convert agreement amount to seller wallet currency
-            wallet_amount = convert_currency(agreement.amount, agreement.currency, seller_wallet.currency)
-            if wallet_amount is None:
-                 raise ValueError(f"Currency conversion failed from {agreement.currency} to {seller_wallet.currency}")
+            offer_amount = Decimal(str(agreement.amount))
 
-            # Credit Wallet
+            # Use the seller_fee locked at accept_offer time
+            seller_fee = Decimal(str(getattr(agreement, 'pending_seller_fee', 0) or 0))
+
+            # Fallback: if the field doesn't exist yet (old agreements),
+            # recalculate from current rate
+            if seller_fee == 0:
+                fee_payer = _resolve_fee_payer(agreement)
+                _, seller_fee = _calculate_fees(offer_amount, fee_payer)
+
+            release_amount = offer_amount - seller_fee
+
+            wallet_amount = convert_currency(
+                release_amount, agreement.currency, seller_wallet.currency
+            )
+            if wallet_amount is None:
+                raise ValueError(
+                    f"Currency conversion failed: {agreement.currency} → {seller_wallet.currency}"
+                )
+
             seller_wallet.balance += wallet_amount
             seller_wallet.save()
-            
-            # Create Transaction Record
+
             converted = get_converted_amounts(wallet_amount, seller_wallet.currency)
             Transaction.objects.create(
                 wallet=seller_wallet,
@@ -178,48 +324,58 @@ class AgreementService:
                 amount=wallet_amount,
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
-                transaction_type='AGREEMENT_PAYOUT', # Using new type if available
+                transaction_type='AGREEMENT_PAYOUT',
                 category='Escrow Release',
                 status='SUCCESSFUL',
                 reference=f"escrow_release_{agreement.id}_{uuid.uuid4().hex[:8]}",
-                description=f"Funds released for agreement {agreement.id}",
-                payment_currency=agreement.currency
+                description=(
+                    f"Escrow released: ₦{offer_amount:,.2f} − "
+                    f"₦{seller_fee:,.2f} escrow fee"
+                ),
+                payment_currency=agreement.currency,
             )
-            
-            # Notify seller of balance update (Credit)
-            transaction.on_commit(lambda: notify_balance_update(agreement.seller), using='wallet_db')
-            
-            agreement.status = 'completed'
+
+            transaction.on_commit(
+                lambda: notify_balance_update(agreement.seller), using='wallet_db'
+            )
+
+            # Credit seller fee to platform
+            if seller_fee > 0:
+                _credit_platform_fee(
+                    seller_fee,
+                    description=f"Seller escrow fee – agreement {agreement.id}",
+                    source_ref=f"escrow_release_{agreement.id}",
+                )
+
+            agreement.status       = 'completed'
             agreement.completed_at = timezone.now()
             agreement.save()
-            
+
             msg = ChatMessage.objects.create(
                 agreement=agreement,
                 sender=user,
                 text=f"{get_user_name(user)} confirmed delivery. Money released.",
                 message_type='system'
             )
-            
+
         return agreement, msg
+
+    # ── remaining methods (unchanged) ─────────────────────────────────────────
 
     @staticmethod
     def reject_offer(user, agreement, offer):
-        """
-        Handles offer rejection.
-        """
-        participants = [agreement.initiator, agreement.counterparty, agreement.buyer, agreement.seller]
+        participants = [
+            agreement.initiator, agreement.counterparty,
+            agreement.buyer, agreement.seller
+        ]
         if user not in participants:
-             raise ValueError("Not a participant")
-
+            raise ValueError("Not a participant")
         offer.status = 'rejected'
         offer.save()
         return offer
 
     @staticmethod
     def create_offer(user, agreement, amount, description, timeline):
-        """
-        Creates a new offer and the associated chat message.
-        """
         converted = get_converted_amounts(amount, agreement.currency)
         with transaction.atomic():
             offer = AgreementOffer.objects.create(
@@ -231,7 +387,6 @@ class AgreementService:
                 timeline=timeline,
                 status='pending'
             )
-            
             message = ChatMessage.objects.create(
                 agreement=agreement,
                 sender=user,
@@ -242,66 +397,54 @@ class AgreementService:
 
     @staticmethod
     def deliver_agreement(user, agreement, proof=None):
-        """
-        Handles agreement delivery by Seller.
-        """
         if agreement.seller != user:
             raise ValueError("Only seller can deliver agreement")
-        
         if agreement.status not in ['active', 'secured']:
-             raise ValueError("Agreement must be active to complete")
+            raise ValueError("Agreement must be active to mark as delivered")
 
         if proof:
             if not isinstance(proof, list):
                 raise ValueError("proof must be a list of URLs")
             agreement.delivery_proof = proof
 
-        agreement.status = 'delivered'
+        agreement.status       = 'delivered'
         agreement.delivered_at = timezone.now()
         agreement.save()
-        
+
         msg = ChatMessage.objects.create(
             agreement=agreement,
             sender=user,
             text=f"{get_user_name(user)} marked as delivered",
             message_type='system'
         )
-        
         return agreement, msg
 
     @staticmethod
-    def lock_terms(agreement, offer):
-        """
-        Locks terms of an agreement based on an offer.
-        """
-        converted = get_converted_amounts(offer.amount, agreement.currency)
-        agreement.amount = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
-        agreement.amount_usd = converted.get('amount_usd') or offer.amount_usd
-        agreement.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
-        agreement.timeline = offer.timeline
-        agreement.status = 'terms_locked'
-        agreement.terms_locked_at = timezone.now()
-        agreement.save()
-        
-        offer.status = 'accepted'
-        offer.save()
-        
-        return agreement
-
-    @staticmethod
     def dispute_agreement(user, agreement, reason=None):
-        """
-        Handles agreement dispute.
-        """
-        participants = [agreement.initiator, agreement.counterparty, agreement.buyer, agreement.seller]
+        participants = [
+            agreement.initiator, agreement.counterparty,
+            agreement.buyer, agreement.seller
+        ]
         if user not in participants:
-             raise ValueError("Not a participant")
-
-        allowed_statuses = ['active', 'secured', 'delivered']
-        if agreement.status not in allowed_statuses:
-             raise ValueError(f"Cannot dispute agreement in {agreement.status} status")
+            raise ValueError("Not a participant")
+        if agreement.status not in ['active', 'secured', 'delivered']:
+            raise ValueError(f"Cannot dispute agreement in '{agreement.status}' status")
 
         agreement.status = 'disputed'
         agreement.save()
-        
+        return agreement
+
+    @staticmethod
+    def lock_terms(agreement, offer):
+        converted = get_converted_amounts(offer.amount, agreement.currency)
+        agreement.amount     = converted.get('amount_ngn') or offer.amount_ngn or offer.amount
+        agreement.amount_usd = converted.get('amount_usd') or offer.amount_usd
+        agreement.amount_ngn = converted.get('amount_ngn') or offer.amount_ngn
+        agreement.timeline   = offer.timeline
+        agreement.status     = 'terms_locked'
+        agreement.terms_locked_at = timezone.now()
+        agreement.save()
+
+        offer.status = 'accepted'
+        offer.save()
         return agreement
