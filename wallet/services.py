@@ -250,9 +250,13 @@ class PayoutService:
         # ── Step 2: Fire ONE Paystack transfer (net amount only) ──────────────
         # FIX 1: We no longer fire a second transfer for the 300 NGN commission.
         # The fee stays inside Middleman's Paystack balance as natural profit.
+        
+        # FIX: Use quantize for proper rounding to nearest kobo
+        kobo_amount = (net_amount * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        
         transfer_resp = client.initiate_transfer(
             source="balance",
-            amount=int((net_amount * Decimal('100')).to_integral_value()),  # kobo
+            amount=int(kobo_amount),
             recipient=recipient_code,
             reason=f"Middleman withdrawal {txn.reference}"
         )
@@ -334,9 +338,12 @@ class PayoutService:
 
         try:
             client = _get_paystack_client()
+            # FIX: Use quantize for proper rounding to nearest kobo
+            kobo_amount = (commission_fee * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            
             resp = client.initiate_transfer(
                 source="balance",
-                amount=int((commission_fee * Decimal('100')).to_integral_value()),  # kobo
+                amount=int(kobo_amount),
                 recipient=commission_recipient,
                 reason=f"Middleman commission – withdrawal {source_txn.reference}"
             )

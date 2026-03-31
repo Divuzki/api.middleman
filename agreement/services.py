@@ -24,6 +24,9 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+import logging
+logger = logging.getLogger(__name__)
+
 from .models import Agreement, AgreementOffer, ChatMessage
 from wallet.models import Wallet, Transaction
 from users.notifications import notify_balance_update
@@ -96,46 +99,87 @@ def _calculate_fees(offer_amount: Decimal, fee_payer: str) -> tuple[Decimal, Dec
 
 def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str):
     """
-    Credits the platform fee wallet (if configured) after a successful
-    escrow collection.  Never raises – logs any errors silently so it
-    never blocks the main agreement flow.
+    Handles the escrow fee.
+    Two modes (controlled via settings.py):
+
+    1. OPTION B (Priority): COMMISSION_RECIPIENT_CODE is set.
+       Fires a second Paystack transfer of fee_amount directly to your subaccount.
+
+    2. OPTION A (Fallback): PLATFORM_FEE_WALLET_USER_ID is set.
+       Credits the platform fee wallet internally for in-app tracking.
+
+    Never raises – logs any errors silently so it never blocks the main flow.
     """
-    platform_user_id = getattr(settings, 'PLATFORM_FEE_WALLET_USER_ID', None)
-    if not platform_user_id or fee_amount <= 0:
-        if fee_amount > 0:
-            import logging
-            logging.getLogger(__name__).info(
-                f"Escrow fee ₦{fee_amount} for {source_ref} not credited "
-                f"(PLATFORM_FEE_WALLET_USER_ID not set)."
-            )
+    if fee_amount <= 0:
         return
 
-    import logging
-    logger = logging.getLogger(__name__)
+    commission_recipient = getattr(settings, 'COMMISSION_RECIPIENT_CODE', None)
+    platform_user_id = getattr(settings, 'PLATFORM_FEE_WALLET_USER_ID', None)
 
-    try:
-        with transaction.atomic(using='wallet_db'):
-            platform_wallet, _ = Wallet.objects.get_or_create(user_id=platform_user_id)
-            platform_wallet.balance += fee_amount
-            platform_wallet.save()
-
-            converted = get_converted_amounts(fee_amount, 'NGN')
-            Transaction.objects.create(
-                wallet=platform_wallet,
-                title="Escrow Fee",
-                amount=fee_amount,
-                amount_ngn=fee_amount,
-                amount_usd=converted.get('amount_usd'),
-                transaction_type='DEPOSIT',
-                category='Escrow Fee',
-                status='SUCCESSFUL',
-                reference=f"escrow_fee_{uuid.uuid4().hex[:10]}",
-                description=description,
-                payment_currency='NGN',
+    # ── OPTION B: Direct Paystack Transfer ──────────────────────────────────
+    if commission_recipient:
+        try:
+            client = _get_paystack_client()
+            # FIX: Use quantize for proper rounding to nearest kobo
+            kobo_amount = (fee_amount * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            
+            resp = client.initiate_transfer(
+                source="balance",
+                amount=int(kobo_amount),
+                recipient=commission_recipient,
+                reason=f"Middleman escrow fee – {source_ref}"
             )
-            logger.info(f"Escrow fee ₦{fee_amount} credited to platform wallet. {source_ref}")
-    except Exception as e:
-        logger.error(f"Failed to credit platform escrow fee for {source_ref}: {e}")
+
+            if resp and resp.get('status'):
+                transfer_ref = resp['data'].get('reference', 'N/A')
+                logger.info(
+                    f"Escrow fee transfer successful. ₦{fee_amount} → {commission_recipient}. "
+                    f"Paystack ref: {transfer_ref}. Source: {source_ref}"
+                )
+            else:
+                logger.error(
+                    f"Escrow fee transfer non-success. Response: {resp}. Source: {source_ref}"
+                )
+        except Exception as e:
+            logger.error(f"Escrow fee transfer FAILED for {source_ref}: {e}")
+        return
+
+    # ── OPTION A: Internal Credit ───────────────────────────────────────────
+    if platform_user_id:
+        try:
+            with transaction.atomic(using='wallet_db'):
+                platform_wallet, _ = Wallet.objects.get_or_create(user_id=platform_user_id)
+                platform_wallet.balance += fee_amount
+                platform_wallet.save()
+
+                converted = get_converted_amounts(fee_amount, 'NGN')
+                Transaction.objects.create(
+                    wallet=platform_wallet,
+                    title="Escrow Fee",
+                    amount=fee_amount,
+                    amount_ngn=fee_amount,
+                    amount_usd=converted.get('amount_usd'),
+                    transaction_type='DEPOSIT',
+                    category='Escrow Fee',
+                    status='SUCCESSFUL',
+                    reference=f"escrow_fee_{uuid.uuid4().hex[:10]}",
+                    description=description,
+                    payment_currency='NGN',
+                )
+                logger.info(f"Escrow fee ₦{fee_amount} credited to platform wallet. {source_ref}")
+        except Exception as e:
+            logger.error(f"Failed to credit platform escrow fee for {source_ref}: {e}")
+    else:
+        logger.info(
+            f"Escrow fee ₦{fee_amount} for {source_ref} logged but not transferred/credited "
+            f"(neither COMMISSION_RECIPIENT_CODE nor PLATFORM_FEE_WALLET_USER_ID set)."
+        )
+
+
+def _get_paystack_client():
+    """Lazy import to avoid circular deps."""
+    from wallet.utils import PaystackClient
+    return PaystackClient()
 
 
 def get_user_name(user):
