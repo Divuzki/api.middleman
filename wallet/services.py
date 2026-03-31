@@ -252,7 +252,7 @@ class PayoutService:
         # The fee stays inside Middleman's Paystack balance as natural profit.
         
         # FIX: Use quantize for proper rounding to nearest kobo
-        kobo_amount = (net_amount * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        kobo_amount = (net_amount * 100).quantize(1, rounding=ROUND_HALF_UP)
         
         transfer_resp = client.initiate_transfer(
             source="balance",
@@ -339,7 +339,7 @@ class PayoutService:
         try:
             client = _get_paystack_client()
             # FIX: Use quantize for proper rounding to nearest kobo
-            kobo_amount = (commission_fee * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            kobo_amount = (commission_fee * 100).quantize(1, rounding=ROUND_HALF_UP)
             
             resp = client.initiate_transfer(
                 source="balance",

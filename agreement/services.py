@@ -121,7 +121,7 @@ def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str)
         try:
             client = _get_paystack_client()
             # FIX: Use quantize for proper rounding to nearest kobo
-            kobo_amount = (fee_amount * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            kobo_amount = (fee_amount * 100).quantize(1, rounding=ROUND_HALF_UP)
             
             resp = client.initiate_transfer(
                 source="balance",
