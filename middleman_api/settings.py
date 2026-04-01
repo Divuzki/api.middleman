@@ -455,7 +455,7 @@ WITHDRAWAL_COMMISSION_FEE = 300
 
 # The recipient_code of your platform subaccount on Paystack.
 # Get it from: Paystack Dashboard → Settings → Subaccounts
-COMMISSION_RECIPIENT_CODE = os.getenv("COMMISSION_RECIPIENT_CODE", "RCP_xxxxxxxxxxxxxxx")
+COMMISSION_RECIPIENT_CODE = os.getenv("COMMISSION_RECIPIENT_CODE", "ACCT_vofw24vx1x6kfvs")
 
 # User.id of your internal platform account.
 # Escrow fees and withdrawal commissions are credited to this wallet.
