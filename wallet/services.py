@@ -16,7 +16,7 @@ Changes vs original:
 
 import logging
 import uuid
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db import transaction
 from django.core.exceptions import ValidationError
