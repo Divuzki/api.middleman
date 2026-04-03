@@ -65,7 +65,7 @@ class AgreementViewSet(viewsets.ModelViewSet):
         ).order_by('-created_at')
     
     def get_object(self, queryset=None):
-        obj = get_object_or_404(Agreement.objects.all(), id=self.kwargs['pk'])
+        obj = get_object_or_404(self.get_queryset(), id=self.kwargs['pk'])
         self.check_object_permissions(self.request, obj)
         return obj
 
