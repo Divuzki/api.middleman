@@ -263,25 +263,63 @@ class VerifyBankAccountView(GenericAPIView):
 
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            # Call Paystack API to verify bank account
-            client = PaystackClient()
-            response_data = client.resolve_account_number(
-                bank_code=serializer.validated_data['bankCode'],
-                account_number=serializer.validated_data['accountNumber']
+        if not serializer.is_valid():
+            raise ValidationError(serializer.errors)
+
+        user = request.user
+        bank_code      = serializer.validated_data['bankCode']
+        account_number = serializer.validated_data['accountNumber']
+        bank_name      = serializer.validated_data['bankName']
+        currency       = serializer.validated_data['currency']
+
+        # Step A: Resolve account name via Paystack
+        client = PaystackClient()
+        response_data = client.resolve_account_number(
+            bank_code=bank_code,
+            account_number=account_number,
+        )
+
+        if not (response_data and response_data.get("status")):
+            raise ValidationError("Could not resolve account name. Please check the account details and try again.")
+
+        resolved_name = response_data.get("data", {}).get("account_name", "")
+
+        # Step B: Validate name matches user's registered name
+        first_name = (user.first_name or "").strip()
+        last_name  = (user.last_name  or "").strip()
+
+        if not first_name or not last_name:
+            raise ValidationError(
+                "Your profile must have a first name and last name set before verifying a bank account."
             )
 
-            # Check if response is successful
-            if response_data and response_data.get("status"):
-                data = response_data.get("data", {})
-                return StandardResponse(data={
-                    "valid": True,
-                    "accountName": data.get("account_name", "Unknown")
-                })
-            else:
-                raise ValidationError("Could not resolve account name")
-        
-        raise ValidationError("Could not resolve account name")
+        resolved_lower = resolved_name.lower()
+        if first_name.lower() not in resolved_lower or last_name.lower() not in resolved_lower:
+            raise ValidationError(
+                f"The account name '{resolved_name}' does not match your registered name "
+                f"({first_name} {last_name}). Please use a bank account registered in your name."
+            )
+
+        # Step C: Save / update the PayoutAccount
+        payout_account, _ = PayoutAccount.objects.update_or_create(
+            user=user,
+            bank_code=bank_code,
+            account_number=account_number,
+            defaults={
+                'type': 'bank',
+                'currency': currency,
+                'bank_name': bank_name,
+                'account_name': resolved_name,
+            }
+        )
+
+        account_serializer = PayoutAccountSerializer(payout_account)
+
+        return StandardResponse(data={
+            "valid": True,
+            "accountName": resolved_name,
+            "account": account_serializer.data,
+        })
 
 class IdentityVerificationView(GenericAPIView):
     permission_classes = [IsAuthenticated]
