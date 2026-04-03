@@ -33,6 +33,7 @@ from .utils import (
 from middleman_api.utils import StandardResponse, get_converted_amounts
 from middleman_api.exceptions import GatewayError
 from django.conf import settings
+from decimal import Decimal
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
