@@ -91,8 +91,6 @@ class PayoutAccountSerializer(serializers.ModelSerializer):
 class BankVerificationSerializer(serializers.Serializer):
     bankCode = serializers.CharField()
     accountNumber = serializers.CharField()
-    bankName = serializers.CharField()
-    currency = serializers.ChoiceField(choices=['NGN', 'USD'])
 
 class IdentityVerificationInputSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=['nin', 'bvn'], required=False, allow_null=True)

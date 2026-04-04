@@ -269,8 +269,6 @@ class VerifyBankAccountView(GenericAPIView):
         user = request.user
         bank_code      = serializer.validated_data['bankCode']
         account_number = serializer.validated_data['accountNumber']
-        bank_name      = serializer.validated_data['bankName']
-        currency       = serializer.validated_data['currency']
 
         # Step A: Resolve account name via Paystack
         client = PaystackClient()
@@ -300,25 +298,9 @@ class VerifyBankAccountView(GenericAPIView):
                 f"({first_name} {last_name}). Please use a bank account registered in your name."
             )
 
-        # Step C: Save / update the PayoutAccount
-        payout_account, _ = PayoutAccount.objects.update_or_create(
-            user=user,
-            bank_code=bank_code,
-            account_number=account_number,
-            defaults={
-                'type': 'bank',
-                'currency': currency,
-                'bank_name': bank_name,
-                'account_name': resolved_name,
-            }
-        )
-
-        account_serializer = PayoutAccountSerializer(payout_account)
-
         return StandardResponse(data={
             "valid": True,
             "accountName": resolved_name,
-            "account": account_serializer.data,
         })
 
 class IdentityVerificationView(GenericAPIView):
