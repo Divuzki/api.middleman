@@ -12,10 +12,17 @@ class AuthUserSerializer(serializers.ModelSerializer):
     lastName = serializers.CharField(source='last_name')
     image_url = serializers.CharField(read_only=True)
     balance = serializers.SerializerMethodField()
+    virtualAccount = serializers.SerializerMethodField()
+    identityVerificationStatus = serializers.CharField(source='identity_verification_status', read_only=True)
 
     class Meta:
         model = User
-        fields = ['uid', 'email', 'firstName', 'lastName', 'image_url', 'phone_number', 'isIdentityVerified', 'has_set_account_pin', 'balance', 'is_active', 'currency_preference', 'hide_balance']
+        fields = [
+            'uid', 'email', 'firstName', 'lastName', 'image_url', 'phone_number',
+            'isIdentityVerified', 'identityVerificationStatus',
+            'has_set_account_pin', 'balance', 'is_active',
+            'currency_preference', 'hide_balance', 'virtualAccount',
+        ]
 
     def get_balance(self, obj):
         try:
@@ -23,6 +30,15 @@ class AuthUserSerializer(serializers.ModelSerializer):
             return float(wallet.balance)
         except Wallet.DoesNotExist:
             return 0.0
+
+    def get_virtualAccount(self, obj):
+        if not obj.virtual_account_number:
+            return None
+        return {
+            "accountNumber": obj.virtual_account_number,
+            "accountName": obj.virtual_account_name,
+            "bankName": obj.virtual_bank_name,
+        }
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
