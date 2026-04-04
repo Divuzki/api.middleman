@@ -327,6 +327,10 @@ class WithdrawalView(APIView):
         account_id = serializer.validated_data['accountId']
 
         user = request.user
+
+        if not user.isIdentityVerified:
+            raise PermissionDenied("Identity verification is required before making withdrawals. Please verify your identity first.")
+
         if not user.transaction_pin or not user.verify_pin(pin):
             raise ValidationError("Invalid PIN")
 
@@ -653,7 +657,7 @@ class PaystackWebhookView(APIView):
         txn.save()
         logger.info(f"transfer.success {reference}: withdrawal marked SUCCESSFUL.")
 
-        # Notify user
+        # Notify user via push + WebSocket balance refresh
         wallet = txn.wallet
         user = User.objects.filter(pk=wallet.user_id).first()
         if user:
@@ -662,6 +666,11 @@ class PaystackWebhookView(APIView):
                 "Withdrawal Successful",
                 f"Your withdrawal of ₦{txn.amount:,.2f} has been sent to your bank."
             )
+            try:
+                from users.notifications import notify_balance_update
+                notify_balance_update(user)
+            except Exception as e:
+                logger.error(f"WebSocket balance update failed for user {user.pk}: {e}")
 
     # ── transfer.failed / transfer.reversed ───────────────────────────────────
     def _handle_transfer_failed(self, data, event_name):
