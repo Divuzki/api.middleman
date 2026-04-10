@@ -484,7 +484,7 @@ class AgreementService:
         return agreement, msg
 
     @staticmethod
-    def dispute_agreement(user, agreement, reason=None):
+    def dispute_agreement(user, agreement, reason=None, category=None):
         participants = [
             agreement.initiator, agreement.counterparty,
             agreement.buyer, agreement.seller
@@ -494,9 +494,36 @@ class AgreementService:
         if agreement.status not in ['active', 'secured', 'delivered']:
             raise ValueError(f"Cannot dispute agreement in '{agreement.status}' status")
 
+        role = 'buyer' if user == agreement.buyer else 'seller'
+
         agreement.status = 'disputed'
         agreement.save()
-        return agreement
+
+        # Create Intercom dispute ticket (fire-and-forget)
+        ticket_id = None
+        try:
+            from .intercom import IntercomClient
+            client = IntercomClient()
+            ticket_data = client.create_dispute_ticket(
+                agreement=agreement,
+                user=user,
+                reason=reason or "No reason provided",
+                category=category or "general",
+                role=role,
+            )
+            ticket_id = ticket_data.get("id") if ticket_data else None
+        except Exception as e:
+            logger.error(f"Failed to create Intercom ticket for dispute {agreement.id}: {e}")
+
+        # Create system message in agreement chat
+        msg = ChatMessage.objects.create(
+            agreement=agreement,
+            sender=user,
+            text=f"Dispute filed: {reason or 'No reason provided'}",
+            message_type='system'
+        )
+
+        return agreement, ticket_id, msg
 
     @staticmethod
     def lock_terms(agreement, offer):

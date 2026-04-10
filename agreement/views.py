@@ -1,11 +1,14 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError, PermissionDenied, APIException
 from middleman_api.utils import StandardResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.conf import settings
 from .models import Agreement, AgreementOffer, ChatMessage
 from .serializers import AgreementSerializer, ChatMessageSerializer, AgreementOfferSerializer
 from asgiref.sync import async_to_sync
@@ -15,6 +18,11 @@ from users.notifications import notify_balance_update, notify_badge_counts
 from .notifications import send_agreement_notification
 from .services import AgreementService
 import uuid
+import hmac
+import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AgreementViewSet(viewsets.ModelViewSet):
     serializer_class = AgreementSerializer
@@ -358,18 +366,26 @@ class AgreementViewSet(viewsets.ModelViewSet):
     def dispute(self, request, pk=None):
         agreement = self.get_object()
         reason = request.data.get('reason')
-        
+        category = request.data.get('category')
+
         try:
-            agreement = AgreementService.dispute_agreement(request.user, agreement, reason)
+            agreement, ticket_id, msg = AgreementService.dispute_agreement(
+                request.user, agreement, reason, category
+            )
         except ValueError as e:
              raise ValidationError(str(e))
-        
+
         self._notify_agreement_update(agreement)
-        
+
         for participant in self._get_participants(agreement):
             notify_badge_counts(participant)
 
-        return StandardResponse(self.get_serializer(agreement).data)
+        send_agreement_notification(agreement)
+
+        data = self.get_serializer(agreement).data
+        if ticket_id:
+            data['disputeTicketId'] = ticket_id
+        return StandardResponse(data)
 
     @action(detail=True, methods=['get', 'post'], url_path='messages')
     def messages(self, request, pk=None):
@@ -408,14 +424,64 @@ class AgreementViewSet(viewsets.ModelViewSet):
             raise ValidationError("amount, description, and timeline are required")
             
         offer, message = AgreementService.create_offer(request.user, agreement, amount, description, timeline)
-        
+
         self._notify_offer_created(message)
         self._notify_agreement_update(agreement, last_message=f"Offer: {amount}")
-        
+
         send_agreement_notification(agreement, status='awaiting_acceptance')
-        
+
         for participant in self._get_participants(agreement):
             if participant != request.user:
                 notify_badge_counts(participant)
 
         return StandardResponse(data=ChatMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+
+class IntercomWebhookView(APIView):
+    """
+    Receives webhook events from Intercom (e.g. ticket resolved).
+    Intercom signs payloads with HMAC-SHA1 via X-Hub-Signature header.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        secret = settings.INTERCOM_WEBHOOK_SECRET
+        signature = request.headers.get('X-Hub-Signature', '')
+
+        if secret and signature:
+            expected = "sha1=" + hmac.new(
+                key=secret.encode('utf-8'),
+                msg=request.body,
+                digestmod=hashlib.sha1,
+            ).hexdigest()
+            if not hmac.compare_digest(expected, signature):
+                logger.warning("Intercom webhook: invalid signature")
+                return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        topic = request.data.get('topic')
+        data = request.data.get('data', {})
+
+        try:
+            if topic == 'ticket.state.updated':
+                self._handle_ticket_state_update(data)
+        except Exception as e:
+            logger.error(f"Intercom webhook error [{topic}]: {e}", exc_info=True)
+
+        return Response(status=status.HTTP_200_OK)
+
+    def _handle_ticket_state_update(self, data):
+        ticket_attrs = data.get('ticket_attributes', {})
+        agreement_id = ticket_attrs.get('agreement_id')
+        new_state = data.get('ticket_state')
+
+        if not agreement_id:
+            return
+
+        try:
+            agreement = Agreement.objects.get(id=agreement_id)
+        except Agreement.DoesNotExist:
+            logger.warning(f"Intercom webhook: agreement {agreement_id} not found")
+            return
+
+        if new_state == 'resolved' and agreement.status == 'disputed':
+            send_agreement_notification(agreement, status='dispute_resolved')

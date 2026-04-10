@@ -50,9 +50,14 @@ class AuthView(APIView):
         The actual authentication logic is handled by FirebaseAuthentication.
         """
         serializer = AuthUserSerializer(request.user)
+        user_data = serializer.data
+        from agreement.intercom import IntercomClient
+        intercom_hash = IntercomClient.generate_identity_hash(request.user.firebase_uid)
+        if intercom_hash:
+            user_data["intercomUserHash"] = intercom_hash
         return StandardResponse(data={
             "valid": True,
-            "user": serializer.data
+            "user": user_data
         })
 
 class UserProfileUpdateView(GenericAPIView):

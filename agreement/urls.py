@@ -1,10 +1,11 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import AgreementViewSet
+from .views import AgreementViewSet, IntercomWebhookView
 
 router = DefaultRouter()
 router.register(r'agreements', AgreementViewSet, basename='agreement')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('webhooks/intercom/', IntercomWebhookView.as_view(), name='intercom-webhook'),
 ]
