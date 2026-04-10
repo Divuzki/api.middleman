@@ -315,62 +315,22 @@ class PayoutService:
     @staticmethod
     def _record_commission(commission_fee, source_txn, platform_fee_user_id=None):
         """
-        Transfers the 300 NGN commission to your Paystack subaccount
-        via a second Paystack transfer.
-
-        If the commission transfer fails for any reason, it is logged but
-        does NOT fail or reverse the user's withdrawal – their money has
-        already left. You can reconcile missed commissions manually via
-        the Paystack dashboard.
+        Enqueues an async Celery task to transfer the 300 NGN commission to
+        COMMISSION_SLP_ACCT via Paystack. Dispatched on_commit so it never
+        runs inside a rolled-back transaction.
         """
         if commission_fee <= 0:
             return
 
-        commission_recipient = getattr(settings, 'COMMISSION_RECIPIENT_CODE', None)
-
-        if not commission_recipient:
-            logger.error(
-                f"COMMISSION_RECIPIENT_CODE not set in settings. "
-                f"Commission of ₦{commission_fee} for {source_txn.reference} was NOT transferred. "
-                f"Set COMMISSION_RECIPIENT_CODE in settings.py to fix this."
-            )
-            return
-
-        try:
-            client = _get_paystack_client()
-            # FIX: Use quantize for proper rounding to nearest kobo
-            kobo_amount = (commission_fee * 100).quantize(1, rounding=ROUND_HALF_UP)
-            
-            resp = client.initiate_transfer(
-                source="balance",
-                amount=int(kobo_amount),
-                recipient=commission_recipient,
-                reason=f"Middleman commission – withdrawal {source_txn.reference}"
-            )
-
-            if resp and resp.get('status'):
-                transfer_ref = resp['data'].get('reference', 'N/A')
-                logger.info(
-                    f"Commission transfer successful. "
-                    f"₦{commission_fee} → {commission_recipient}. "
-                    f"Paystack ref: {transfer_ref}. "
-                    f"Source withdrawal: {source_txn.reference}"
-                )
-            else:
-                logger.error(
-                    f"Commission transfer returned non-success status. "
-                    f"Response: {resp}. "
-                    f"Source withdrawal: {source_txn.reference}"
-                )
-
-        except Exception as e:
-            # Never block the user's withdrawal because of a commission transfer failure.
-            # Log it for manual reconciliation.
-            logger.error(
-                f"Commission transfer FAILED for withdrawal {source_txn.reference}. "
-                f"Error: {e}. "
-                f"Manual action: transfer ₦{commission_fee} to {commission_recipient}."
-            )
+        from .tasks import send_commission
+        kobo_amount = int((commission_fee * 100).quantize(1, rounding=ROUND_HALF_UP))
+        description = f"Withdrawal commission: txn {source_txn.reference}"
+        transaction.on_commit(
+            lambda: send_commission.apply_async(args=[kobo_amount, description])
+        )
+        logger.info(
+            f"Commission of ₦{commission_fee} for {source_txn.reference} enqueued for async dispatch."
+        )
 
 
 def _get_paystack_client():

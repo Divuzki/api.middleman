@@ -1,0 +1,2 @@
+web: python manage.py migrate_all && daphne -b 0.0.0.0 -p $PORT middleman_api.asgi:application
+worker: celery -A middleman_api worker -l info

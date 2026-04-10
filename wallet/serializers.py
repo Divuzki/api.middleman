@@ -28,8 +28,8 @@ class WithdrawalSerializer(serializers.Serializer):
         amount = data.get('amount')
         currency = data.get('currency', 'NGN')
 
-        if currency == 'NGN' and amount < Decimal('100.00'):
-            raise serializers.ValidationError({"amount": "Minimum amount is 100 NGN"})
+        if currency == 'NGN' and amount < Decimal('1000.00'):
+            raise serializers.ValidationError({"amount": "Minimum withdrawal is ₦1,000"})
         if currency == 'USD' and amount < Decimal('10.00'):
             raise serializers.ValidationError({"amount": "Minimum amount is 10 USD"})
         return data

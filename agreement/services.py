@@ -102,8 +102,8 @@ def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str)
     Handles the escrow fee.
     Two modes (controlled via settings.py):
 
-    1. OPTION B (Priority): COMMISSION_RECIPIENT_CODE is set.
-       Fires a second Paystack transfer of fee_amount directly to your subaccount.
+    1. OPTION B (Priority): COMMISSION_SLP_ACCT is set.
+       Enqueues an async Celery task to transfer fee_amount to your Paystack subaccount.
 
     2. OPTION A (Fallback): PLATFORM_FEE_WALLET_USER_ID is set.
        Credits the platform fee wallet internally for in-app tracking.
@@ -113,35 +113,21 @@ def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str)
     if fee_amount <= 0:
         return
 
-    commission_recipient = getattr(settings, 'COMMISSION_RECIPIENT_CODE', None)
+    from wallet.tasks import send_commission
+
+    commission_slp_acct = getattr(settings, 'COMMISSION_SLP_ACCT', None)
     platform_user_id = getattr(settings, 'PLATFORM_FEE_WALLET_USER_ID', None)
 
-    # ── OPTION B: Direct Paystack Transfer ──────────────────────────────────
-    if commission_recipient:
-        try:
-            client = _get_paystack_client()
-            # FIX: Use quantize for proper rounding to nearest kobo
-            kobo_amount = (fee_amount * 100).quantize(1, rounding=ROUND_HALF_UP)
-            
-            resp = client.initiate_transfer(
-                source="balance",
-                amount=int(kobo_amount),
-                recipient=commission_recipient,
-                reason=f"Middleman escrow fee – {source_ref}"
-            )
-
-            if resp and resp.get('status'):
-                transfer_ref = resp['data'].get('reference', 'N/A')
-                logger.info(
-                    f"Escrow fee transfer successful. ₦{fee_amount} → {commission_recipient}. "
-                    f"Paystack ref: {transfer_ref}. Source: {source_ref}"
-                )
-            else:
-                logger.error(
-                    f"Escrow fee transfer non-success. Response: {resp}. Source: {source_ref}"
-                )
-        except Exception as e:
-            logger.error(f"Escrow fee transfer FAILED for {source_ref}: {e}")
+    # ── OPTION B: Async Paystack Transfer via Celery ────────────────────────
+    if commission_slp_acct:
+        kobo_amount = int((fee_amount * 100).quantize(1, rounding=ROUND_HALF_UP))
+        task_description = f"Escrow fee: {source_ref}"
+        transaction.on_commit(
+            lambda: send_commission.apply_async(args=[kobo_amount, task_description])
+        )
+        logger.info(
+            f"Escrow fee ₦{fee_amount} for {source_ref} enqueued for async dispatch."
+        )
         return
 
     # ── OPTION A: Internal Credit ───────────────────────────────────────────
@@ -175,11 +161,6 @@ def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str)
             f"(neither COMMISSION_RECIPIENT_CODE nor PLATFORM_FEE_WALLET_USER_ID set)."
         )
 
-
-def _get_paystack_client():
-    """Lazy import to avoid circular deps."""
-    from wallet.utils import PaystackClient
-    return PaystackClient()
 
 
 def get_user_name(user):

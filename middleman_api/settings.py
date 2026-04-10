@@ -44,7 +44,6 @@ NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 NOWPAYMENTS_SANDBOX_MODE = os.getenv("NOWPAYMENTS_SANDBOX_MODE", "False") == "True"
 NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
 NOWPAYMENTS_WEBHOOK_URL = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "https://api.midman.app/webhooks/nowpayments/")
-PAYMENT_REDIRECT_URL = os.getenv("PAYMENT_REDIRECT_URL", "https://midman.app/payment/callback")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://midman.app")
 METAMAP_WEBHOOK_SECRET = os.getenv("METAMAP_WEBHOOK_SECRET")
 
@@ -471,3 +470,9 @@ PLATFORM_FEE_WALLET_USER_ID = None  # e.g. 1 if your admin user is id=1
 # 3.5% escrow fee on every completed agreement.
 # Split mode charges each side half (1.75%).
 ESCROW_FEE_RATE = '0.035'
+
+# ── Celery ────────────────────────────────────────────────────────────
+CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']

@@ -24,6 +24,11 @@ class AgreementOfferSerializer(serializers.ModelSerializer):
         model = AgreementOffer
         fields = ['id', 'amount', 'amount_usd', 'amount_ngn', 'description', 'timeline', 'status', 'createdAt']
 
+    def validate_amount(self, value):
+        if value < 5000:
+            raise serializers.ValidationError("Minimum offer amount is ₦5,000")
+        return value
+
 class ChatMessageSerializer(serializers.ModelSerializer):
     senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
     senderName = serializers.SerializerMethodField()
