@@ -2,7 +2,7 @@ from rest_framework import authentication
 from rest_framework import exceptions
 from firebase_admin import auth
 from django.contrib.auth import get_user_model
-from django.conf import settings
+from django.db import IntegrityError
 import firebase_admin
 from .emails import send_welcome_email
 
@@ -15,27 +15,25 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
             return None
 
         id_token = auth_header.split(' ').pop()
-        
+
         try:
             decoded_token = auth.verify_id_token(id_token)
         except Exception as e:
             raise exceptions.AuthenticationFailed(f'Invalid token: {str(e)}')
 
         uid = decoded_token.get('uid')
-        email = decoded_token.get('email')
-        
+        email = decoded_token.get('email', '').lower().strip()
+
         if not email:
             raise exceptions.AuthenticationFailed('Token missing email')
 
-        # Get or create user
+        # Get or create user (case-insensitive lookup + race-condition safe)
         try:
-            user = User.objects.get(email=email)
-            # Update firebase_uid if missing or changed (though email is unique)
+            user = User.objects.get(email__iexact=email)
             if user.firebase_uid != uid:
                 user.firebase_uid = uid
-                user.save()
+                user.save(update_fields=['firebase_uid'])
         except User.DoesNotExist:
-            # Create new user
             user_data = {
                 'email': email,
                 'firebase_uid': uid,
@@ -43,13 +41,13 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
                 'last_name': ' '.join(decoded_token.get('name', '').split(' ')[1:]) if decoded_token.get('name') else '',
                 'image_url': decoded_token.get('picture'),
             }
-            # We need to set a password for Django user, even if unusable
-            user = User.objects.create_user(**user_data)
-            user.set_unusable_password()
-            user.save()
-
-            # Send welcome email
-            send_welcome_email(user)
-
+            try:
+                user = User.objects.create_user(**user_data)
+                user.set_unusable_password()
+                user.save(update_fields=['password'])
+                send_welcome_email(user)
+            except IntegrityError:
+                # Race condition: another request created this user first
+                user = User.objects.get(email__iexact=email)
 
         return (user, None)
