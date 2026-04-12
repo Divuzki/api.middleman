@@ -85,6 +85,7 @@ class PaystackIntegrationTests(APITestCase):
         self.assertEqual(details['accountNumber'], '9876543210')
         self.assertEqual(details['bankName'], 'Sterling Bank')
 
+    @override_settings(PAYSTACK_SECRET_KEY='test_secret_key_for_webhook')
     def test_paystack_webhook_credits_wallet(self):
         """
         DVA charge.success webhook creates a fresh transaction (FIX 3 behavior).
@@ -154,6 +155,7 @@ class PaystackIntegrationTests(APITestCase):
         wallet.refresh_from_db()
         self.assertEqual(float(wallet.balance), 4900.0)
 
+    @override_settings(PAYSTACK_SECRET_KEY='test_secret_key_for_webhook')
     def test_paystack_webhook_creates_new_transaction_if_no_match(self):
         # Create user
         wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
@@ -205,6 +207,7 @@ class PaystackIntegrationTests(APITestCase):
         wallet.refresh_from_db()
         self.assertEqual(wallet.balance, 1950)
 
+    @override_settings(PAYSTACK_SECRET_KEY='test_secret_key_for_webhook')
     def test_paystack_webhook_recovers_stuck_pending_transaction(self):
         """
         Idempotency fix: if a transaction with external_reference already exists

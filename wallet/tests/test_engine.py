@@ -1,8 +1,10 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Transaction
+from wallet.services import WalletEngine
 from decimal import Decimal
 from django.core.exceptions import ValidationError
+from unittest.mock import patch
 
 User = get_user_model()
 
@@ -20,7 +22,9 @@ class WalletEngineTests(TestCase):
         self.wallet.balance = Decimal('1000.00')
         self.wallet.save()
 
-    def test_deposit_update_credits_wallet(self):
+    @patch('wallet.services.notify_balance_update')
+    @patch('wallet.services.send_standard_notification')
+    def test_deposit_update_credits_wallet(self, mock_notify, mock_push):
         # Create PENDING deposit
         tx = Transaction.objects.create(
             wallet=self.wallet,
@@ -31,25 +35,26 @@ class WalletEngineTests(TestCase):
             status='PENDING',
             reference='ref_deposit_001'
         )
-        
+
         # Verify balance unchanged
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1000.00'))
-        
-        # Update to SUCCESSFUL
-        tx.status = 'SUCCESSFUL'
-        tx.save()
-        
+
+        # Approve via WalletEngine
+        WalletEngine.approve_transaction(tx.pk)
+
         # Verify balance updated
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1500.00'))
-        
-        # Idempotency check: Save again shouldn't add more
-        tx.save()
+
+        # Idempotency check: approve again shouldn't add more
+        WalletEngine.approve_transaction(tx.pk)
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1500.00'))
 
-    def test_withdrawal_update_debits_wallet(self):
+    @patch('wallet.services.notify_balance_update')
+    @patch('wallet.services.send_standard_notification')
+    def test_withdrawal_update_debits_wallet(self, mock_notify, mock_push):
         # Create PENDING withdrawal
         tx = Transaction.objects.create(
             wallet=self.wallet,
@@ -60,16 +65,15 @@ class WalletEngineTests(TestCase):
             status='PENDING',
             reference='ref_withdrawal_001'
         )
-        
-        # Verify balance unchanged (pending withdrawal reserves nothing currently)
+
+        # Verify balance unchanged before approval
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1000.00'))
-        
-        # Update to SUCCESSFUL
-        tx.status = 'SUCCESSFUL'
-        tx.save()
-        
-        # Verify balance updated
+
+        # Approve via WalletEngine
+        WalletEngine.approve_transaction(tx.pk)
+
+        # Verify balance debited
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('800.00'))
 
@@ -84,12 +88,11 @@ class WalletEngineTests(TestCase):
             status='PENDING',
             reference='ref_withdrawal_big'
         )
-        
-        # Try to update to SUCCESSFUL -> Should fail
-        tx.status = 'SUCCESSFUL'
+
+        # Approve via WalletEngine -> Should raise ValidationError
         with self.assertRaises(ValidationError):
-            tx.save()
-            
+            WalletEngine.approve_transaction(tx.pk)
+
         # Verify balance unchanged
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, Decimal('1000.00'))
@@ -101,7 +104,7 @@ class WalletEngineTests(TestCase):
         (because it's a creation, not an update).
         """
         initial_balance = self.wallet.balance
-        
+
         Transaction.objects.create(
             wallet=self.wallet,
             title="Direct Success",
@@ -111,7 +114,7 @@ class WalletEngineTests(TestCase):
             status='SUCCESSFUL',
             reference='ref_direct_001'
         )
-        
-        # Verify balance UNCHANGED (Signal should have ignored it)
+
+        # Verify balance UNCHANGED (no signal, creation doesn't auto-credit)
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.balance, initial_balance)
