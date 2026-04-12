@@ -511,13 +511,27 @@ class PaystackWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # ── Signature verification (unchanged) ───────────────────────────────
+        # ── DIAG-01: Request received ─────────────────────────────────────────
+        content_length = request.headers.get('Content-Length', 'unknown')
+        logger.info(
+            f"🔍 DIAG-01: Paystack webhook POST received. "
+            f"Method={request.method} Content-Length={content_length}"
+        )
+
+        # ── DIAG-02: Signature header present? ───────────────────────────────
         secret    = settings.PAYSTACK_SECRET_KEY
         signature = request.headers.get('x-paystack-signature')
 
         if not signature:
+            logger.error(
+                f"🔍 DIAG-02: x-paystack-signature header MISSING. "
+                f"Headers received: {list(request.headers.keys())}"
+            )
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
+        logger.info(f"🔍 DIAG-02: x-paystack-signature header present (len={len(signature)}).")
+
+        # ── DIAG-03: Signature verification ──────────────────────────────────
         computed_sig = hmac.new(
             key=secret.encode('utf-8'),
             msg=request.body,
@@ -525,13 +539,23 @@ class PaystackWebhookView(APIView):
         ).hexdigest()
 
         if computed_sig != signature:
-            logger.warning("Paystack webhook: invalid signature.")
+            logger.error(
+                f"🔍 DIAG-03: Signature MISMATCH. "
+                f"computed[:32]={computed_sig[:32]} received[:32]={signature[:32]} "
+                f"secret_prefix={secret[:8] if secret else 'NONE'} "
+                f"body_len={len(request.body)}"
+            )
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
-        # ── Route to the correct handler ─────────────────────────────────────
+        logger.info("🔍 DIAG-03: Signature verified OK.")
+
+        # ── DIAG-04: Event type ───────────────────────────────────────────────
         event = request.data.get('event')
         data  = request.data.get('data', {})
+        ref_preview = data.get('reference', 'N/A') if isinstance(data, dict) else 'N/A'
+        logger.info(f"🔍 DIAG-04: event={event} reference={ref_preview}")
 
+        # ── Route to the correct handler ─────────────────────────────────────
         try:
             if event == 'charge.success':
                 self._handle_charge_success(data)
@@ -543,11 +567,12 @@ class PaystackWebhookView(APIView):
             elif event in ('transfer.failed', 'transfer.reversed'):
                 self._handle_transfer_failed(data, event)
             # ─────────────────────────────────────────────────────────────────
+            else:
+                logger.info(f"🔍 DIAG-04: Unhandled event type '{event}'. Ignoring.")
 
         except Exception as e:
             logger.error(f"Paystack webhook error [{event}]: {e}", exc_info=True)
             # Always return 200 so Paystack doesn't retry infinitely.
-            # Log the error and investigate manually.
             return Response(status=status.HTTP_200_OK)
 
         return Response(status=status.HTTP_200_OK)
@@ -562,19 +587,69 @@ class PaystackWebhookView(APIView):
         We always create a fresh transaction from the webhook data.
         The DepositView no longer creates a pending transaction for DVA deposits.
         """
-        reference    = data.get('reference')
-        amount_kobo  = data.get('amount', 0)
-        fees_kobo    = data.get('fees', 0)
-        channel      = data.get('channel')
-        authorization = data.get('authorization', {})
+        # ── DIAG-05: Parse payload ────────────────────────────────────────────
+        reference        = data.get('reference')
+        amount_kobo      = data.get('amount', 0)
+        fees_kobo        = data.get('fees', 0)
+        channel          = data.get('channel')
+        authorization    = data.get('authorization', {})
         receiver_account = authorization.get('receiver_bank_account_number')
+        customer         = data.get('customer', {})
+        cust_email       = customer.get('email')
+        cust_code        = customer.get('customer_code')
 
         net_amount_ngn = (amount_kobo - fees_kobo) / 100.0
 
-        # ── Idempotency ───────────────────────────────────────────────────────
-        if Transaction.objects.filter(external_reference=reference).exists():
-            logger.info(f"charge.success {reference} already processed. Skipping.")
-            return
+        logger.info(
+            f"🔍 DIAG-05: charge.success payload parsed: "
+            f"reference={reference} amount_kobo={amount_kobo} fees_kobo={fees_kobo} "
+            f"net_amount_ngn={net_amount_ngn} channel={channel} "
+            f"receiver_account={receiver_account} "
+            f"cust_email={cust_email} cust_code={cust_code}"
+        )
+
+        # ── DIAG-06: Idempotency check (handles stuck PENDING too) ────────────
+        existing_tx = Transaction.objects.filter(external_reference=reference).first()
+        if existing_tx:
+            if existing_tx.status == 'SUCCESSFUL':
+                logger.info(
+                    f"🔍 DIAG-06: {reference} already SUCCESSFUL (tx={existing_tx.pk}). Skipping."
+                )
+                return
+            elif existing_tx.status == 'PENDING':
+                # Previous attempt created the TX but approve_transaction failed.
+                # Re-attempt approval so the wallet is credited on retry/requery.
+                logger.warning(
+                    f"🔍 DIAG-06: {reference}: existing PENDING tx {existing_tx.pk} found. "
+                    f"Previous approve_transaction likely failed. Re-approving now."
+                )
+                try:
+                    WalletEngine.approve_transaction(existing_tx.pk)
+                    logger.info(
+                        f"🔍 DIAG-06: {reference}: re-approval succeeded for tx {existing_tx.pk}."
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"🔍 DIAG-06: {reference}: re-approval FAILED for tx {existing_tx.pk}: {e}",
+                        exc_info=True
+                    )
+                return
+
+        logger.info(f"🔍 DIAG-06: {reference}: no existing tx found. Proceeding with fresh processing.")
+
+        # ── DIAG-07: Channel check ────────────────────────────────────────────
+        if channel == 'dedicated_nuban':
+            sender_name = authorization.get('sender_name', 'Someone')
+            sender_bank = authorization.get('sender_bank', 'your bank')
+            logger.info(
+                f"🔍 DIAG-07: DVA channel confirmed. "
+                f"sender_name={sender_name} sender_bank={sender_bank}"
+            )
+        else:
+            logger.warning(
+                f"🔍 DIAG-07: channel={channel} — this may NOT be a DVA transfer. "
+                f"Processing anyway, but verify in Paystack dashboard."
+            )
 
         # ── Build push notification text ──────────────────────────────────────
         notification_title = None
@@ -586,25 +661,78 @@ class PaystackWebhookView(APIView):
             notification_title = f"{sender_name} sent {amount_fmt} to your wallet"
             notification_body  = f"Transfer from {sender_bank}. Ref: {reference}"
 
-        # ── Find the wallet owner ─────────────────────────────────────────────
+        # ── DIAG-08: User lookup by virtual account number ────────────────────
         user = None
         if receiver_account:
             user = User.objects.filter(virtual_account_number=receiver_account).first()
+            if user:
+                logger.info(
+                    f"🔍 DIAG-08: User found by virtual_account_number={receiver_account} "
+                    f"→ user.pk={user.pk} email={user.email}"
+                )
+            else:
+                stored_duas = list(
+                    User.objects.exclude(virtual_account_number__isnull=True)
+                    .exclude(virtual_account_number='')
+                    .values_list('virtual_account_number', 'email')[:10]
+                )
+                logger.warning(
+                    f"🔍 DIAG-08: No user found for virtual_account_number={receiver_account}. "
+                    f"First 10 stored DVA numbers: {stored_duas}"
+                )
+        else:
+            logger.warning(
+                f"🔍 DIAG-08: receiver_account is None/empty — skipping DVA lookup."
+            )
+
+        # ── DIAG-09: Fallback — email lookup ──────────────────────────────────
         if not user:
-            email = data.get('customer', {}).get('email')
-            user  = User.objects.filter(email=email).first()
+            user = User.objects.filter(email=cust_email).first()
+            if user:
+                logger.info(
+                    f"🔍 DIAG-09: User found by email={cust_email} → user.pk={user.pk}"
+                )
+            else:
+                logger.warning(
+                    f"🔍 DIAG-09: No user found for email={cust_email}."
+                )
+
+        # ── DIAG-10: Fallback — customer_code lookup ──────────────────────────
         if not user:
-            customer_code = data.get('customer', {}).get('customer_code')
-            if customer_code:
-                user = User.objects.filter(paystack_customer_code=customer_code).first()
+            if cust_code:
+                user = User.objects.filter(paystack_customer_code=cust_code).first()
+                if user:
+                    logger.info(
+                        f"🔍 DIAG-10: User found by customer_code={cust_code} → user.pk={user.pk}"
+                    )
+                else:
+                    logger.warning(
+                        f"🔍 DIAG-10: No user found for customer_code={cust_code}."
+                    )
+            else:
+                logger.warning("🔍 DIAG-10: customer_code is None/empty — skipping code lookup.")
+
+        # ── DIAG-11: All lookups failed ───────────────────────────────────────
         if not user:
-            logger.error(f"charge.success {reference}: could not identify user. DVA: {receiver_account}")
+            logger.error(
+                f"🔍 DIAG-11: CRITICAL — could not identify user for charge.success {reference}. "
+                f"Tried: virtual_account_number={receiver_account}, "
+                f"email={cust_email}, customer_code={cust_code}. "
+                f"This deposit (₦{net_amount_ngn:,.2f}) is LOST until manually reconciled. "
+                f"Check Paystack dashboard and run requery_dva to retry."
+            )
             return
 
-        wallet, _ = Wallet.objects.get_or_create(user_id=user.id)
+        # ── DIAG-12: Wallet ───────────────────────────────────────────────────
+        wallet, created = Wallet.objects.get_or_create(user_id=user.id)
+        logger.info(
+            f"🔍 DIAG-12: Wallet {'created' if created else 'found'}: "
+            f"wallet.pk={wallet.pk} current_balance={wallet.balance}"
+        )
+
         converted = get_converted_amounts(net_amount_ngn, 'NGN')
 
-        # ── Create and immediately approve the transaction ────────────────────
+        # ── DIAG-13: Create transaction ───────────────────────────────────────
         new_ref = f"ref_{uuid.uuid4().hex[:12]}"
         tx = Transaction.objects.create(
             wallet=wallet,
@@ -622,13 +750,30 @@ class PaystackWebhookView(APIView):
             description=notification_body or "Deposit via Paystack DVA",
             icon='savings',
         )
-
-        WalletEngine.approve_transaction(
-            tx.pk,
-            notification_title=notification_title,
-            notification_body=notification_body,
+        logger.info(
+            f"🔍 DIAG-13: Transaction created: "
+            f"tx.pk={tx.pk} internal_ref={new_ref} external_ref={reference} "
+            f"amount=₦{net_amount_ngn:,.2f} status=PENDING"
         )
-        logger.info(f"charge.success {reference}: credited ₦{net_amount_ngn:,.2f} to wallet {wallet.pk}.")
+
+        # ── DIAG-14: Approve transaction ──────────────────────────────────────
+        try:
+            WalletEngine.approve_transaction(
+                tx.pk,
+                notification_title=notification_title,
+                notification_body=notification_body,
+            )
+            wallet.refresh_from_db()
+            logger.info(
+                f"🔍 DIAG-14: approve_transaction SUCCEEDED for tx={tx.pk}. "
+                f"New wallet balance=₦{wallet.balance:,.2f}"
+            )
+        except Exception as e:
+            logger.error(
+                f"🔍 DIAG-14: approve_transaction FAILED for tx={tx.pk} ref={reference}: {e}",
+                exc_info=True
+            )
+            raise
 
     # ── transfer.success ──────────────────────────────────────────────────────
     def _handle_transfer_success(self, data):
@@ -685,6 +830,20 @@ class PaystackWebhookView(APIView):
 
         logger.warning(f"{event_name} received for ref {reference}. Reversing withdrawal.")
         WalletEngine.reverse_withdrawal(reference)
+
+
+# ── Webhook health check (GET /webhooks/paystack/health/) ─────────────────────
+class PaystackWebhookHealthView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        has_secret = bool(getattr(settings, 'PAYSTACK_SECRET_KEY', None))
+        return Response({
+            "status": "ok",
+            "webhook_reachable": True,
+            "paystack_secret_configured": has_secret,
+            "secret_prefix": settings.PAYSTACK_SECRET_KEY[:8] + "..." if has_secret else None,
+        })
 
 
 # ── safe notification helper (won't crash the webhook if push fails) ──────────

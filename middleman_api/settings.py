@@ -103,6 +103,16 @@ if not DEBUG:
                 'level': 'INFO',
                 'propagate': True,
             },
+            'wallet': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
+            'agreement': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
         },
     }
 
