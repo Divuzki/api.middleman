@@ -86,28 +86,19 @@ class PaystackIntegrationTests(APITestCase):
         self.assertEqual(details['bankName'], 'Sterling Bank')
 
     def test_paystack_webhook_credits_wallet(self):
+        """
+        DVA charge.success webhook creates a fresh transaction (FIX 3 behavior).
+        The webhook handler no longer matches/updates a pre-existing pending
+        transaction — it always creates a new authoritative transaction from
+        the webhook payload and immediately approves it.
+        """
         # Create user with customer code
         self.user.paystack_customer_code = 'CUS_WEBHOOK'
         self.user.save()
-        
-        # Create a PENDING transaction
+
         wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
-        # Ensure wallet is empty
         wallet.balance = 0
         wallet.save()
-        
-        tx = Transaction.objects.create(
-            wallet=wallet,
-            title="Deposit",
-            amount=5000, # Gross amount
-            amount_ngn=5000,
-            transaction_type='DEPOSIT',
-            category='Deposit',
-            status='PENDING',
-            reference='ref_internal_123',
-            payment_method='PAYSTACK',
-            payment_currency='NGN'
-        )
 
         url = reverse('paystack-webhook')
         payload = {
@@ -116,64 +107,52 @@ class PaystackIntegrationTests(APITestCase):
                 "id": 302961,
                 "domain": "live",
                 "status": "success",
-                "reference": "ref_paystack_external",
-                "amount": 500000, # 5000 NGN
-                "fees": 10000, # 100 NGN
+                "reference": "ref_paystack_dva_001",
+                "amount": 500000,   # 5000 NGN in kobo
+                "fees": 10000,      # 100 NGN in kobo  → net = 4900 NGN
+                "channel": "dedicated_nuban",
                 "customer": {
                     "email": self.user.email,
                     "customer_code": "CUS_WEBHOOK",
-                }
+                },
+                "authorization": {
+                    "receiver_bank_account_number": None,
+                    "sender_name": "Test Sender",
+                    "sender_bank": "Opay",
+                },
             }
         }
-        
+
         import json
         import hmac
         import hashlib
         from django.conf import settings
-        
-        # Use a fixed secret for test
-        # We need to ensure the view uses this secret. 
-        # In tests, settings are usually overridden.
-        
-        # Generate signature based on how test client serializes data.
-        # client.post(..., format='json') uses json.dumps(data)
+
         json_payload = json.dumps(payload).encode('utf-8')
-        
-        # Since we can't easily control the exact bytes sent by client.post to match our manual hash,
-        # we will construct the request manually or use a simpler approach:
-        # We can use GenericAPIClient or just ensure we match the serialization.
-        # Default json.dumps adds spaces. Django's test client might differ.
-        # Let's try to match it.
-        
         signature = hmac.new(
             key=settings.PAYSTACK_SECRET_KEY.encode('utf-8'),
             msg=json_payload,
             digestmod=hashlib.sha512
         ).hexdigest()
-        
-        # However, the view reads request.body.
-        # If we use client.post(..., data=payload, format='json'), request.body will be the JSON.
-        # BUT, there's a risk of mismatch in spacing.
-        # Safest way: send pre-encoded content.
-        
+
         response = self.client.post(
-            url, 
-            data=json_payload, 
+            url,
+            data=json_payload,
             content_type='application/json',
             headers={'x-paystack-signature': signature}
         )
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
-        # Verify transaction update
-        tx.refresh_from_db()
-        self.assertEqual(tx.status, 'SUCCESSFUL')
-        self.assertEqual(tx.external_reference, 'ref_paystack_external')
-        self.assertEqual(tx.amount, 4900) # 5000 - 100
-        
-        # Verify wallet balance
+
+        # Webhook creates a NEW authoritative transaction (not updating old pending one)
+        new_tx = Transaction.objects.filter(external_reference='ref_paystack_dva_001').first()
+        self.assertIsNotNone(new_tx, "A new transaction with external_reference should have been created")
+        self.assertEqual(new_tx.status, 'SUCCESSFUL')
+        self.assertEqual(float(new_tx.amount), 4900.0)  # net = 5000 - 100
+
+        # Wallet should be credited
         wallet.refresh_from_db()
-        self.assertEqual(wallet.balance, 4900)
+        self.assertEqual(float(wallet.balance), 4900.0)
 
     def test_paystack_webhook_creates_new_transaction_if_no_match(self):
         # Create user
@@ -225,6 +204,79 @@ class PaystackIntegrationTests(APITestCase):
         # Verify wallet balance
         wallet.refresh_from_db()
         self.assertEqual(wallet.balance, 1950)
+
+    def test_paystack_webhook_recovers_stuck_pending_transaction(self):
+        """
+        Idempotency fix: if a transaction with external_reference already exists
+        but is still PENDING (approve_transaction failed previously), a second
+        webhook delivery re-approves it instead of silently skipping.
+        """
+        import json
+        import hmac
+        import hashlib
+        from django.conf import settings
+
+        self.user.paystack_customer_code = 'CUS_RECOVERY'
+        self.user.save()
+
+        wallet, _ = Wallet.objects.get_or_create(user_id=self.user.id)
+        wallet.balance = 0
+        wallet.save()
+
+        # Simulate a stuck state: transaction created with external_reference
+        # but status is still PENDING (as if approve_transaction crashed last time)
+        stuck_tx = Transaction.objects.create(
+            wallet=wallet,
+            title="Deposit",
+            amount=900,
+            amount_ngn=900,
+            transaction_type='DEPOSIT',
+            category='Deposit',
+            status='PENDING',
+            reference='ref_stuck_internal',
+            external_reference='ref_stuck_external',
+            payment_method='PAYSTACK',
+            payment_currency='NGN',
+            description='Deposit via Paystack DVA',
+            icon='savings',
+        )
+
+        # Now Paystack re-delivers the webhook (e.g. via requery)
+        payload = {
+            "event": "charge.success",
+            "data": {
+                "reference": "ref_stuck_external",
+                "amount": 100000,  # 1000 NGN
+                "fees": 10000,     # 100 NGN — net would be 900 NGN
+                "channel": "dedicated_nuban",
+                "customer": {"email": self.user.email, "customer_code": "CUS_RECOVERY"},
+                "authorization": {"receiver_bank_account_number": None},
+            }
+        }
+
+        json_payload = json.dumps(payload).encode('utf-8')
+        signature = hmac.new(
+            key=settings.PAYSTACK_SECRET_KEY.encode('utf-8'),
+            msg=json_payload,
+            digestmod=hashlib.sha512
+        ).hexdigest()
+
+        response = self.client.post(
+            reverse('paystack-webhook'),
+            data=json_payload,
+            content_type='application/json',
+            headers={'x-paystack-signature': signature}
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        # The stuck PENDING transaction should now be SUCCESSFUL
+        stuck_tx.refresh_from_db()
+        self.assertEqual(stuck_tx.status, 'SUCCESSFUL')
+
+        # Wallet should be credited with the amount on the existing tx (900)
+        wallet.refresh_from_db()
+        self.assertEqual(float(wallet.balance), 900.0)
 
     @patch('wallet.views.PaystackClient')
     def test_deposit_retry_on_missing_phone(self, MockPaystackClient):
