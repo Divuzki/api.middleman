@@ -67,6 +67,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
             # It should be fine since we are creating new objects.
             
     def get_queryset(self):
+        if self.action == 'join_agreement':
+            return Agreement.objects.all()
         user = self.request.user
         return Agreement.objects.filter(
             Q(initiator=user) | Q(counterparty=user)
