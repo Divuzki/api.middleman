@@ -637,6 +637,12 @@ class UserConsumer(AsyncWebsocketConsumer):
     async def badge_counts(self, event):
         await self.send(text_data=json.dumps(event['data']))
 
+    async def identity_status_update(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'identity_status_update',
+            'data': event['data']
+        }))
+
     @database_sync_to_async
     def get_user_from_token(self):
         query_string = self.scope['query_string'].decode()

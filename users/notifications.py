@@ -132,6 +132,32 @@ def notify_badge_counts(user):
         }
     )
 
+def notify_identity_status(user, status, reason=None):
+    """
+    Broadcasts identity verification status change via WebSocket to the user's channel.
+    """
+    if not user:
+        return
+
+    channel_layer = get_channel_layer()
+    group_name = f'user_{user.id}'
+    data = {
+        'type': 'identity_status_update',
+        'status': status,
+    }
+    if reason:
+        data['reason'] = reason
+    try:
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            {
+                'type': 'identity_status_update',
+                'data': data
+            }
+        )
+    except Exception as e:
+        print(f"Failed to send identity status WS to {group_name}: {e}")
+
 def send_chat_notification(recipient, sender_name, message_text, conversation_id, conversation_type, sender_id):
     """
     Sends a chat notification to the recipient's devices.

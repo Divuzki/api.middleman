@@ -17,7 +17,7 @@ from .serializers import (
 )
 from .serializers import DeviceProfileSerializer
 from .emails import send_otp_email
-from .notifications import send_device_logout_notification, send_standard_notification
+from .notifications import send_device_logout_notification, send_standard_notification, notify_identity_status
 import requests
 import random
 import uuid
@@ -505,6 +505,8 @@ class MetaMapWebhookView(APIView):
                         "url": url,
                     },
                 )
+
+                notify_identity_status(user, mapped_status, reason=reason)
 
         IdentityWebhookEvent.objects.filter(payload_hash=payload_hash).update(processed=True)
         return Response({"ok": True}, status=status.HTTP_200_OK)
