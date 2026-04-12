@@ -61,7 +61,7 @@ class PaystackClient:
                          msg = resp_data['data']['message']
                 except ValueError:
                     pass
-            raise GatewayError(f"Paystack Error: {msg}")
+            raise GatewayError(msg)
 
     def create_customer(self, email, first_name, last_name, phone=None):
         """
