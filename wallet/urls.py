@@ -1,11 +1,16 @@
 from django.urls import re_path
-from .views import DepositView, WithdrawalView, TransactionListView, VerifyDepositView, PaystackWebhookView, NOWPaymentsWebhookView
+from .views import (
+    DepositView, WithdrawalView, TransactionListView, VerifyDepositView,
+    PaystackWebhookView, PaystackWebhookHealthView, NOWPaymentsWebhookView,
+)
 
 urlpatterns = [
     re_path(r'^users/deposit/?$', DepositView.as_view(), name='deposit'),
     re_path(r'^users/deposit/verify/(?P<reference>\w+)/?$', VerifyDepositView.as_view(), name='verify-deposit'),
     re_path(r'^user/withdraw/?$', WithdrawalView.as_view(), name='withdraw'),
     re_path(r'^transactions/?$', TransactionListView.as_view(), name='transactions'),
+    # Health check must come BEFORE the webhook URL so the regex doesn't swallow it
+    re_path(r'^webhooks/paystack/health/?$', PaystackWebhookHealthView.as_view(), name='paystack-webhook-health'),
     re_path(r'^webhooks/paystack/?$', PaystackWebhookView.as_view(), name='paystack-webhook'),
     re_path(r'^webhooks/nowpayments/?$', NOWPaymentsWebhookView.as_view(), name='nowpayments-webhook'),
 ]
