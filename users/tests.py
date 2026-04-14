@@ -436,3 +436,11 @@ class MetaMapWebhookTests(TestCase):
             )
             self.assertEqual(r1.status_code, status.HTTP_200_OK)
             self.assertEqual(r2.status_code, status.HTTP_200_OK)
+
+    def test_profile_update_name_locked_after_verified(self):
+        # When user's identity is verified, attempts to change first/last name should be rejected
+        self.user.isIdentityVerified = True
+        self.user.save(update_fields=['isIdentityVerified'])
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(reverse('update-profile'), {'firstName': 'New', 'lastName': 'Name'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

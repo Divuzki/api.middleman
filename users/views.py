@@ -65,6 +65,11 @@ class UserProfileUpdateView(GenericAPIView):
     serializer_class = UserProfileUpdateSerializer
 
     def post(self, request):
+        # Disallow editing first/last name after identity verification
+        name_keys = {"firstName", "lastName", "first_name", "last_name"}
+        if request.user.isIdentityVerified and any(k in request.data for k in name_keys):
+            raise PermissionDenied("Cannot edit first name or last name after identity verification.")
+
         serializer = self.get_serializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             user = serializer.save()
