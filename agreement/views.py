@@ -34,13 +34,17 @@ class AgreementViewSet(viewsets.ModelViewSet):
     def batch_delete(self, request):
         ids = request.data.get("ids", [])
         if not ids:
-            return StandardResponse({"error": "No IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
+            return StandardResponse(
+                {"error": "No IDs provided"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
         user = request.user
-        agreements = Agreement.objects.filter(id__in=ids, initiator=user, status="draft", counterparty__isnull=True)
+        agreements = Agreement.objects.filter(
+            id__in=ids, initiator=user, status="draft", counterparty__isnull=True
+        )
         count = agreements.count()
         agreements.delete()
-        
+
         return StandardResponse({"deleted_count": count}, status=status.HTTP_200_OK)
 
     def destroy(self, request, pk=None):
