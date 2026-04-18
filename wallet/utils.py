@@ -86,7 +86,7 @@ class PaystackClient:
         }
         return self._request('PUT', f'/customer/{customer_code}', payload)
 
-    def create_dedicated_account(self, customer_code, preferred_bank="wema-bank"):
+    def create_dedicated_account(self, customer_code, preferred_bank="titan-paystack"):
         """
         Create a dedicated virtual account for an existing customer.
         """

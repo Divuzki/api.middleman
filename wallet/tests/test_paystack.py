@@ -37,7 +37,7 @@ class PaystackIntegrationTests(APITestCase):
         mock_create_dva.return_value = {
             'status': True,
             'data': {
-                'bank': {'name': 'Wema Bank', 'id': 1, 'slug': 'wema-bank'},
+                'bank': {'name': 'Titan Bank', 'id': 1, 'slug': 'titan-paystack'},
                 'account_name': 'Test User',
                 'account_number': '1234567890',
                 'assigned': True,
@@ -56,7 +56,7 @@ class PaystackIntegrationTests(APITestCase):
         # Check Response Structure
         self.assertIn('bankTransferDetails', response.data['data'])
         details = response.data['data']['bankTransferDetails']
-        self.assertEqual(details['bankName'], 'Wema Bank')
+        self.assertEqual(details['bankName'], 'Titan Bank')
         self.assertEqual(details['accountNumber'], '1234567890')
         
         # Check User Model Update

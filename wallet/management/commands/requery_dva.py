@@ -33,9 +33,9 @@ class Command(BaseCommand):
         parser.add_argument(
             '--provider-slug',
             type=str,
-            default='wema-bank',
+            default='titan-paystack',
             dest='provider_slug',
-            help='Paystack bank provider slug (default: wema-bank)',
+            help='Paystack bank provider slug (default: titan-paystack)',
         )
         parser.add_argument(
             '--date',
