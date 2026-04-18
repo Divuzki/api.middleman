@@ -65,10 +65,15 @@ class UserProfileUpdateView(GenericAPIView):
     serializer_class = UserProfileUpdateSerializer
 
     def post(self, request):
-        # Disallow editing first/last name after identity verification
+        # Lock first/last name once identity is verified OR while a check is in flight —
+        # the name on file must match what MetaMap sees on the government ID.
         name_keys = {"firstName", "lastName", "first_name", "last_name"}
-        if request.user.isIdentityVerified and any(k in request.data for k in name_keys):
-            raise PermissionDenied("Cannot edit first name or last name after identity verification.")
+        if any(k in request.data for k in name_keys):
+            pending_statuses = {"submitted", "in_review"}
+            if request.user.isIdentityVerified:
+                raise PermissionDenied("Cannot edit first name or last name after identity verification.")
+            if getattr(request.user, "identity_verification_status", None) in pending_statuses:
+                raise PermissionDenied("Cannot edit first name or last name while identity check is in progress.")
 
         serializer = self.get_serializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
