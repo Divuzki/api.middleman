@@ -10,10 +10,11 @@ from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError
 from .models import PayoutAccount, DeviceProfile, User, IdentityWebhookEvent
 from .serializers import (
-    UserSerializer, AuthUserSerializer, UserProfileUpdateSerializer, 
-    UserProfilePictureSerializer, PayoutAccountSerializer, 
+    UserSerializer, AuthUserSerializer, UserProfileUpdateSerializer,
+    UserProfilePictureSerializer, PayoutAccountSerializer,
     BankVerificationSerializer, IdentityVerificationInputSerializer,
-    IdentityStatusSerializer, SetAccountPinSerializer, OTPVerifySerializer
+    IdentityStatusSerializer, SetAccountPinSerializer, OTPVerifySerializer,
+    USERNAME_REGEX
 )
 from .serializers import DeviceProfileSerializer
 from .emails import send_otp_email
@@ -161,6 +162,7 @@ class UserProfileUpdateView(GenericAPIView):
                     "user": {
                         "uid": user.firebase_uid, # Assuming firebase_uid is the uid
                         "email": user.email,
+                        "username": user.username,
                         "firstName": user.first_name,
                         "lastName": user.last_name,
                         "displayName": f"{user.first_name} {user.last_name}".strip(),
@@ -170,6 +172,21 @@ class UserProfileUpdateView(GenericAPIView):
                 }
             )
         raise ValidationError(serializer.errors)
+
+class UsernameAvailabilityView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        value = (request.query_params.get('value') or '').strip().lower()
+        if not value:
+            return StandardResponse(data={"available": False, "reason": "missing_value"})
+
+        if not USERNAME_REGEX.match(value):
+            return StandardResponse(data={"available": False, "reason": "invalid_format"})
+
+        taken = User.objects.filter(username__iexact=value).exclude(pk=request.user.pk).exists()
+        return StandardResponse(data={"available": not taken})
+
 
 class UserProfilePictureUpdateView(GenericAPIView):
     permission_classes = [IsAuthenticated]

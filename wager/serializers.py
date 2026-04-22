@@ -17,8 +17,9 @@ class WagerUserSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'avatar']
 
     def get_name(self, obj):
-        full_name = f"{obj.first_name} {obj.last_name}".strip()
-        return full_name if full_name else obj.email.split('@')[0]
+        if obj.username:
+            return obj.username
+        return (obj.email or "").split('@')[0] or "user"
 
 class WagerSerializer(serializers.ModelSerializer):
     creator = WagerUserSerializer(read_only=True)
@@ -89,5 +90,6 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     def get_senderName(self, obj):
         if not obj.sender:
             return "Unknown"
-        full_name = f"{obj.sender.first_name} {obj.sender.last_name}".strip()
-        return full_name if full_name else obj.sender.email.split('@')[0]
+        if obj.sender.username:
+            return obj.sender.username
+        return (obj.sender.email or "").split('@')[0] or "user"

@@ -5,6 +5,14 @@ from middleman_api.utils import get_converted_amounts
 
 User = get_user_model()
 
+def _public_display_name(user):
+    """Username with email-prefix fallback. Never leaks the user's real name."""
+    if user.username:
+        return user.username
+    prefix = (user.email or "").split("@")[0]
+    return prefix or "user"
+
+
 class UserSimpleSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
     avatar = serializers.CharField(source='image_url', read_only=True)
@@ -15,7 +23,7 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'avatar']
 
     def get_name(self, obj):
-        return f"{obj.first_name} {obj.last_name}".strip() or obj.email
+        return _public_display_name(obj)
 
 class AgreementOfferSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
@@ -42,7 +50,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         fields = ['id', 'senderId', 'senderName', 'senderAvatar', 'text', 'type', 'offer', 'timestamp']
 
     def get_senderName(self, obj):
-        return f"{obj.sender.first_name} {obj.sender.last_name}".strip() or obj.sender.email
+        return _public_display_name(obj.sender)
 
 class AgreementSerializer(serializers.ModelSerializer):
     initiator = UserSimpleSerializer(read_only=True)

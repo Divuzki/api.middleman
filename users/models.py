@@ -49,7 +49,13 @@ class UserManager(BaseUserManager):
 
 class User(AbstractUser):
     """User model."""
-    username = None
+    username = models.CharField(
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=15, blank=True, null=True)
     image_url = models.URLField(blank=True, null=True)

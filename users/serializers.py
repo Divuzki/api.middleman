@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fcm_django.models import FCMDevice
@@ -5,6 +7,29 @@ from .models import PayoutAccount, DeviceProfile
 from wallet.models import Wallet
 
 User = get_user_model()
+
+USERNAME_REGEX = re.compile(r'^[a-z0-9_]{3,20}$')
+
+
+def validate_username_value(value, *, user=None):
+    """Shared username validation: format + case-insensitive uniqueness.
+
+    Returns the normalized (lowercased) username, raising ValidationError on failure.
+    """
+    if value is None:
+        return value
+    normalized = value.strip().lower()
+    if not USERNAME_REGEX.match(normalized):
+        raise serializers.ValidationError(
+            "Username must be 3–20 characters using lowercase letters, numbers, or underscores."
+        )
+    qs = User.objects.filter(username__iexact=normalized)
+    if user is not None and getattr(user, 'pk', None):
+        qs = qs.exclude(pk=user.pk)
+    if qs.exists():
+        raise serializers.ValidationError("That username is already taken.")
+    return normalized
+
 
 class AuthUserSerializer(serializers.ModelSerializer):
     uid = serializers.CharField(source='firebase_uid')
@@ -18,7 +43,7 @@ class AuthUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'uid', 'email', 'firstName', 'lastName', 'image_url', 'phone_number',
+            'uid', 'email', 'username', 'firstName', 'lastName', 'image_url', 'phone_number',
             'isIdentityVerified', 'identityVerificationStatus',
             'has_set_account_pin', 'balance', 'is_active',
             'currency_preference', 'hide_balance', 'virtualAccount',
@@ -48,19 +73,23 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False)
+    username = serializers.CharField(required=False, allow_null=True)
     firstName = serializers.CharField(source='first_name', required=False)
     lastName = serializers.CharField(source='last_name', required=False)
     phone_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     displayName = serializers.SerializerMethodField()
     currency_preference = serializers.ChoiceField(choices=['NGN', 'USD'], required=False)
     hide_balance = serializers.BooleanField(required=False)
-    
+
     class Meta:
         model = User
-        fields = ['email', 'firstName', 'lastName', 'phone_number', 'displayName', 'currency_preference', 'hide_balance']
+        fields = ['email', 'username', 'firstName', 'lastName', 'phone_number', 'displayName', 'currency_preference', 'hide_balance']
 
     def get_displayName(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
+
+    def validate_username(self, value):
+        return validate_username_value(value, user=self.instance)
 
 class UserProfilePictureSerializer(serializers.ModelSerializer):
     photoURL = serializers.URLField(source='image_url', allow_blank=True)

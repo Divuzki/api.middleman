@@ -444,3 +444,98 @@ class MetaMapWebhookTests(TestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.post(reverse('update-profile'), {'firstName': 'New', 'lastName': 'Name'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class UsernameTests(TestCase):
+    databases = '__all__'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='name-owner@example.com',
+            password='testpassword',
+            first_name='Alice',
+            last_name='Smith',
+        )
+        self.other = User.objects.create_user(
+            email='other@example.com',
+            password='testpassword',
+            first_name='Bob',
+            last_name='Jones',
+            username='bob_taken',
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_check_available_when_unused(self):
+        response = self.client.get('/user/username/check/', {'value': 'fresh_name'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['data']['available'])
+
+    def test_check_unavailable_when_taken_case_insensitive(self):
+        response = self.client.get('/user/username/check/', {'value': 'BOB_TAKEN'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['data']['available'])
+
+    def test_check_rejects_invalid_format(self):
+        # The endpoint lowercases the incoming value, so mixed case itself is fine.
+        # These forms fail the regex even after lowercasing.
+        for bad in ['ab', 'a' * 21, 'has space', 'with-dash', 'dot.name']:
+            response = self.client.get('/user/username/check/', {'value': bad})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertFalse(response.data['data']['available'], f"{bad} should be invalid")
+            self.assertEqual(response.data['data'].get('reason'), 'invalid_format')
+
+    def test_check_treats_own_username_as_available(self):
+        self.user.username = 'my_name'
+        self.user.save(update_fields=['username'])
+        response = self.client.get('/user/username/check/', {'value': 'my_name'})
+        self.assertTrue(response.data['data']['available'])
+
+    def test_update_profile_saves_username(self):
+        response = self.client.post(reverse('update-profile'), {'username': 'alice_99'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.username, 'alice_99')
+        self.assertEqual(response.data['data']['user']['username'], 'alice_99')
+
+    def test_update_profile_rejects_taken_username_case_insensitive(self):
+        response = self.client.post(reverse('update-profile'), {'username': 'BOB_TAKEN'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_update_profile_rejects_invalid_format(self):
+        response = self.client.post(reverse('update-profile'), {'username': 'has space'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_auth_response_exposes_username(self):
+        self.user.username = 'alice_99'
+        self.user.save(update_fields=['username'])
+        response = self.client.get('/auth/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['data']['user']['username'], 'alice_99')
+
+
+class PublicDisplayNameTests(TestCase):
+    databases = '__all__'
+
+    def test_agreement_user_simple_prefers_username(self):
+        from agreement.serializers import UserSimpleSerializer
+        user = User.objects.create_user(
+            email='participant@example.com',
+            first_name='Jane',
+            last_name='Public',
+            username='jane_p',
+        )
+        data = UserSimpleSerializer(user).data
+        self.assertEqual(data['name'], 'jane_p')
+
+    def test_agreement_user_simple_falls_back_to_email_prefix(self):
+        from agreement.serializers import UserSimpleSerializer
+        user = User.objects.create_user(
+            email='nameless@example.com',
+            first_name='Nameless',
+            last_name='User',
+        )
+        data = UserSimpleSerializer(user).data
+        self.assertEqual(data['name'], 'nameless')
+        # Real name must not leak in the public payload
+        self.assertNotIn('Nameless', str(data))

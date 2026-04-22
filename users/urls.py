@@ -5,12 +5,13 @@ from .views import (
     VerifyBankAccountView, IdentityVerificationView, IdentityStatusView,
     SetAccountPinView, DeviceListCreateView, DeviceDetailView,
     UserActivitiesView, RequestPinChangeOTPView, VerifyPinChangeOTPView,
-    MetaMapWebhookView
+    MetaMapWebhookView, UsernameAvailabilityView
 )
 
 urlpatterns = [
     re_path(r'^auth/?$', AuthView.as_view(), name='auth'),
     re_path(r'^user/profile/?$', UserProfileUpdateView.as_view(), name='update-profile'),
+    re_path(r'^user/username/check/?$', UsernameAvailabilityView.as_view(), name='username-availability'),
     re_path(r'^user/profile-picture/?$', UserProfilePictureUpdateView.as_view(), name='update-profile-picture'),
     re_path(r'^banks/?$', BankListView.as_view(), name='bank-list'),
     re_path(r'^user/payout-accounts/?$', PayoutAccountListCreateView.as_view(), name='payout-account-list-create'),
