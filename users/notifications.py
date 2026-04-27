@@ -1,3 +1,4 @@
+import logging
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.db.models import Q
@@ -7,6 +8,8 @@ from wager.models import Wager
 from agreement.models import Agreement
 from firebase_admin.messaging import Message, Notification, AndroidConfig, APNSConfig, APNSPayload, Aps, AndroidNotification
 from fcm_django.models import FCMDevice
+
+logger = logging.getLogger(__name__)
 
 def send_device_logout_notification(fcm_device):
     """
@@ -31,8 +34,7 @@ def send_device_logout_notification(fcm_device):
             )
         )
     except Exception as e:
-        # Log error but don't crash
-        print(f"Error sending logout notification: {e}")
+        logger.error("Error sending logout notification: %s", e, exc_info=True)
 
 def send_standard_notification(user, title, body, data=None):
     """
@@ -59,7 +61,7 @@ def send_standard_notification(user, title, body, data=None):
             )
         )
     except Exception as e:
-        print(f"Error sending standard notification: {e}")
+        logger.error("Error sending standard notification: %s", e, exc_info=True)
 
 def get_balance_data(user):
     if not user:
@@ -114,9 +116,9 @@ def notify_balance_update(user):
                 'data': data
             }
         )
-        print(f"Notification sent to group {group_name}: {data}")
+        logger.debug("WS notification sent to %s", group_name)
     except Exception as e:
-        print(f"Failed to send notification to group {group_name}: {e}")
+        logger.error("Failed to send WS notification to %s: %s", group_name, e, exc_info=True)
 
 def notify_badge_counts(user):
     data = get_badge_counts_data(user)
@@ -156,7 +158,7 @@ def notify_identity_status(user, status, reason=None):
             }
         )
     except Exception as e:
-        print(f"Failed to send identity status WS to {group_name}: {e}")
+        logger.error("Failed to send identity status WS to %s: %s", group_name, e, exc_info=True)
 
 def send_chat_notification(recipient, sender_name, message_text, conversation_id, conversation_type, sender_id):
     """
@@ -205,7 +207,7 @@ def send_chat_notification(recipient, sender_name, message_text, conversation_id
             )
         )
     except Exception as e:
-        print(f"Error sending chat notification: {e}")
+        logger.error("Error sending chat notification: %s", e, exc_info=True)
 
 def send_status_notification(recipient, title, body, conversation_id, conversation_type, status):
     """
@@ -252,4 +254,4 @@ def send_status_notification(recipient, title, body, conversation_id, conversati
             )
         )
     except Exception as e:
-        print(f"Error sending status notification: {e}")
+        logger.error("Error sending status notification: %s", e, exc_info=True)
