@@ -41,6 +41,29 @@ class Agreement(models.Model):
     currency = models.CharField(max_length=10, default='NGN')
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='draft')
     timeline = models.CharField(max_length=100, null=True, blank=True)
+    timeline_value = models.PositiveIntegerField(null=True, blank=True)
+    timeline_unit = models.CharField(
+        max_length=10,
+        choices=[('days', 'Days'), ('months', 'Months')],
+        null=True,
+        blank=True,
+    )
+
+    expires_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    expires_grace_until = models.DateTimeField(null=True, blank=True)
+    cancelled_reason = models.CharField(max_length=50, null=True, blank=True)
+
+    # Refund tracking (so we can reverse the exact wallet debit)
+    buyer_fee_charged = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    buyer_total_debited = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    buyer_debited_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    buyer_debited_currency = models.CharField(max_length=10, null=True, blank=True)
+
+    # Notification flags (avoid spamming)
+    expires_reminder_24h_sent = models.BooleanField(default=False)
+    expires_reminder_1h_sent = models.BooleanField(default=False)
+    expired_notified = models.BooleanField(default=False)
     
     initiator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='initiated_agreements', db_constraint=False)
     counterparty = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='participated_agreements', db_constraint=False)
@@ -108,7 +131,14 @@ class AgreementOffer(models.Model):
     amount_usd = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     amount_ngn = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     description = models.TextField()
-    timeline = models.CharField(max_length=100)
+    timeline = models.CharField(max_length=100, null=True, blank=True)
+    timeline_value = models.PositiveIntegerField(null=True, blank=True)
+    timeline_unit = models.CharField(
+        max_length=10,
+        choices=[('days', 'Days'), ('months', 'Months')],
+        null=True,
+        blank=True,
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
 

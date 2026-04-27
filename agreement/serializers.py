@@ -27,15 +27,58 @@ class UserSimpleSerializer(serializers.ModelSerializer):
 
 class AgreementOfferSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    timelineValue = serializers.IntegerField(source='timeline_value', required=False, allow_null=True)
+    timelineUnit = serializers.ChoiceField(
+        source='timeline_unit',
+        choices=[('days', 'days'), ('months', 'months')],
+        required=False,
+        allow_null=True,
+    )
+    timeline = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = AgreementOffer
-        fields = ['id', 'amount', 'amount_usd', 'amount_ngn', 'description', 'timeline', 'status', 'createdAt']
+        fields = [
+            'id',
+            'amount',
+            'amount_usd',
+            'amount_ngn',
+            'description',
+            'timeline',
+            'timelineValue',
+            'timelineUnit',
+            'status',
+            'createdAt',
+        ]
 
     def validate_amount(self, value):
         if value < 5000:
             raise serializers.ValidationError("Minimum offer amount is ₦5,000")
         return value
+
+    def validate(self, attrs):
+        timeline_value = attrs.get('timeline_value')
+        timeline_unit = attrs.get('timeline_unit')
+
+        # Timeline is optional; but if one structured field is provided, both must be.
+        if timeline_value is None and timeline_unit is None:
+            return attrs
+        if timeline_value is None or timeline_unit is None:
+            raise serializers.ValidationError("timelineValue and timelineUnit must be provided together.")
+
+        if timeline_unit == 'months':
+            if timeline_value < 1 or timeline_value > 6:
+                raise serializers.ValidationError("timelineValue must be between 1 and 6 months.")
+        elif timeline_unit == 'days':
+            if timeline_value < 1 or timeline_value > 183:
+                raise serializers.ValidationError("timelineValue must be between 1 and 183 days.")
+
+        # Always keep a human readable timeline string for legacy clients/chat transcripts
+        if not attrs.get('timeline'):
+            suffix = 'day' if timeline_unit == 'days' else 'month'
+            attrs['timeline'] = f"{timeline_value} {suffix}{'' if timeline_value == 1 else 's'}"
+
+        return attrs
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     senderId = serializers.CharField(source='sender.firebase_uid', read_only=True)
@@ -71,6 +114,11 @@ class AgreementSerializer(serializers.ModelSerializer):
     initialOffer = serializers.SerializerMethodField()
     currency = serializers.CharField(max_length=10, default='NGN')
     deliveryTimeline = serializers.CharField(source='timeline', read_only=True)
+    timelineValue = serializers.IntegerField(source='timeline_value', required=False, allow_null=True)
+    timelineUnit = serializers.CharField(source='timeline_unit', required=False, allow_null=True)
+    expiresAt = serializers.DateTimeField(source='expires_at', read_only=True)
+    expiredAt = serializers.DateTimeField(source='expired_at', read_only=True)
+    expiresGraceUntil = serializers.DateTimeField(source='expires_grace_until', read_only=True)
     status = serializers.SerializerMethodField()
 
     class Meta:
@@ -80,7 +128,8 @@ class AgreementSerializer(serializers.ModelSerializer):
             'timeline', 'initiator', 'counterparty', 'buyerId', 'sellerId', 
             'creatorRole', 'agreementType', 'feePayer', 'terms', 'shareLink', 'date', 
             'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt', 'deliveryProof',
-            'initialOffer', 'activeOfferId', 'deliveryTimeline'
+            'initialOffer', 'activeOfferId', 'deliveryTimeline',
+            'timelineValue', 'timelineUnit', 'expiresAt', 'expiredAt', 'expiresGraceUntil',
         ]
         read_only_fields = ['id', 'status', 'shareLink', 'date', 'termsLockedAt', 'securedAt', 'deliveredAt', 'completedAt']
 

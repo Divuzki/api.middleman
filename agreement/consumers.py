@@ -100,11 +100,21 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         amount = offer_data.get('amount')
         description = offer_data.get('description')
         timeline = offer_data.get('timeline')
+        timeline_value = offer_data.get('timelineValue')
+        timeline_unit = offer_data.get('timelineUnit')
         
-        if not all([amount, description, timeline]):
+        if not all([amount, description]):
             return
 
-        message = await self.save_offer(self.user, self.agreement_id, amount, description, timeline)
+        message = await self.save_offer(
+            self.user,
+            self.agreement_id,
+            amount,
+            description,
+            timeline=timeline,
+            timeline_value=timeline_value,
+            timeline_unit=timeline_unit,
+        )
         serialized_message = await self.serialize_message(message)
         
         # Cast amount to float for consistency with spec and views
@@ -540,9 +550,17 @@ class AgreementConsumer(AsyncWebsocketConsumer):
         )
 
     @database_sync_to_async
-    def save_offer(self, user, agreement_id, amount, description, timeline):
+    def save_offer(self, user, agreement_id, amount, description, timeline=None, timeline_value=None, timeline_unit=None):
         agreement = Agreement.objects.get(id=agreement_id)
-        offer, message = AgreementService.create_offer(user, agreement, amount, description, timeline)
+        offer, message = AgreementService.create_offer(
+            user,
+            agreement,
+            amount,
+            description,
+            timeline=timeline,
+            timeline_value=timeline_value,
+            timeline_unit=timeline_unit,
+        )
         return message
 
     @database_sync_to_async

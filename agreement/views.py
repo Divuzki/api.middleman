@@ -95,8 +95,10 @@ class AgreementViewSet(viewsets.ModelViewSet):
         # Amount and timeline might be strings or numbers
         amount = self.request.data.get("amount")
         timeline = self.request.data.get("timeline")
+        timeline_value = self.request.data.get("timelineValue")
+        timeline_unit = self.request.data.get("timelineUnit")
 
-        if amount and timeline:
+        if amount:
             # Create initial offer via service
             AgreementService.create_offer(
                 user=self.request.user,
@@ -104,6 +106,8 @@ class AgreementViewSet(viewsets.ModelViewSet):
                 amount=amount,
                 description=f"Initial offer from {creator_role}",
                 timeline=timeline,
+                timeline_value=timeline_value,
+                timeline_unit=timeline_unit,
             )
             # IMPORTANT: We need to ensure the serialized response includes this new offer.
             # The viewset's create method calls get_serializer(instance) AFTER perform_create.
@@ -473,12 +477,20 @@ class AgreementViewSet(viewsets.ModelViewSet):
         amount = request.data.get("amount")
         description = request.data.get("description")
         timeline = request.data.get("timeline")
+        timeline_value = request.data.get("timelineValue")
+        timeline_unit = request.data.get("timelineUnit")
 
-        if not all([amount, description, timeline]):
-            raise ValidationError("amount, description, and timeline are required")
+        if not all([amount, description]):
+            raise ValidationError("amount and description are required")
 
         offer, message = AgreementService.create_offer(
-            request.user, agreement, amount, description, timeline
+            request.user,
+            agreement,
+            amount,
+            description,
+            timeline=timeline,
+            timeline_value=timeline_value,
+            timeline_unit=timeline_unit,
         )
 
         self._notify_offer_created(message)

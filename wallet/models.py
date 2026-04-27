@@ -20,6 +20,7 @@ class Transaction(models.Model):
         ('WAGER_REFUND', 'Wager Refund'),
         ('AGREEMENT_PAYMENT', 'Agreement Payment'),
         ('AGREEMENT_PAYOUT', 'Agreement Payout'),
+        ('AGREEMENT_REFUND', 'Agreement Refund'),
     ]
 
     STATUS_CHOICES = [

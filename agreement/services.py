@@ -32,6 +32,12 @@ from wallet.models import Wallet, Transaction
 from users.notifications import notify_balance_update
 from middleman_api.utils import get_converted_amounts, convert_currency
 import uuid
+from datetime import timedelta
+
+try:
+    from dateutil.relativedelta import relativedelta
+except Exception:  # pragma: no cover
+    relativedelta = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -290,12 +296,35 @@ class AgreementService:
                     agreement_locked.amount_usd   = offer_converted.get('amount_usd')
                     agreement_locked.amount_ngn   = offer_converted.get('amount_ngn')
                     agreement_locked.timeline      = offer.timeline
+                    agreement_locked.timeline_value = getattr(offer, 'timeline_value', None)
+                    agreement_locked.timeline_unit = getattr(offer, 'timeline_unit', None)
                     agreement_locked.status        = 'active'
                     agreement_locked.secured_at    = timezone.now()
                     agreement_locked.active_offer  = offer
                     # Store pending seller fee so confirm_agreement can use it
                     # (avoids re-calculating with potentially updated rate)
                     agreement_locked.pending_seller_fee = seller_fee
+
+                    # Refund + expiry tracking
+                    agreement_locked.buyer_fee_charged = buyer_fee
+                    agreement_locked.buyer_total_debited = total_buyer_debit
+                    agreement_locked.buyer_debited_amount = wallet_amount
+                    agreement_locked.buyer_debited_currency = buyer_wallet.currency
+
+                    # Compute expiry (timeline is optional)
+                    if getattr(offer, 'timeline_value', None) and getattr(offer, 'timeline_unit', None):
+                        agreement_locked.expires_at = AgreementService.compute_expires_at(
+                            anchor_at=agreement_locked.secured_at,
+                            timeline_value=offer.timeline_value,
+                            timeline_unit=offer.timeline_unit,
+                        )
+                        agreement_locked.expired_at = None
+                        agreement_locked.expires_grace_until = None
+                        agreement_locked.cancelled_reason = None
+                        agreement_locked.expires_reminder_24h_sent = False
+                        agreement_locked.expires_reminder_1h_sent = False
+                        agreement_locked.expired_notified = False
+
                     agreement_locked.save()
 
                     offer.status = 'accepted'
@@ -315,6 +344,19 @@ class AgreementService:
             offer.save()
 
         return agreement, offer, None
+
+    @staticmethod
+    def compute_expires_at(anchor_at, timeline_value: int, timeline_unit: str):
+        if not anchor_at or not timeline_value or not timeline_unit:
+            return None
+        if timeline_unit == 'days':
+            return anchor_at + timedelta(days=int(timeline_value))
+        if timeline_unit == 'months':
+            if relativedelta is None:
+                # Fallback approximation if dateutil isn't available
+                return anchor_at + timedelta(days=int(timeline_value) * 30)
+            return anchor_at + relativedelta(months=int(timeline_value))
+        return None
 
     # ── confirm_agreement (buyer confirms delivery → release funds to seller) ──
     @staticmethod
@@ -420,8 +462,33 @@ class AgreementService:
         return offer
 
     @staticmethod
-    def create_offer(user, agreement, amount, description, timeline):
+    def create_offer(user, agreement, amount, description, timeline=None, timeline_value=None, timeline_unit=None):
         converted = get_converted_amounts(amount, agreement.currency)
+        # Normalize structured timeline inputs (they may arrive as strings)
+        tv = None
+        tu = None
+        try:
+            if timeline_value is not None and str(timeline_value).strip() != "":
+                tv = int(str(timeline_value).strip())
+        except Exception:
+            tv = None
+        if timeline_unit in ("days", "months"):
+            tu = timeline_unit
+
+        # Enforce caps server-side (timeline optional)
+        if tv is not None or tu is not None:
+            if tv is None or tu is None:
+                raise ValueError("timelineValue and timelineUnit must be provided together.")
+            if tu == "months" and (tv < 1 or tv > 6):
+                raise ValueError("timelineValue must be between 1 and 6 months.")
+            if tu == "days" and (tv < 1 or tv > 183):
+                raise ValueError("timelineValue must be between 1 and 183 days.")
+
+        timeline_str = (timeline or "").strip()
+        if not timeline_str and tv is not None and tu is not None:
+            suffix = "day" if tu == "days" else "month"
+            timeline_str = f"{tv} {suffix}{'' if tv == 1 else 's'}"
+
         with transaction.atomic():
             offer = AgreementOffer.objects.create(
                 agreement=agreement,
@@ -429,7 +496,9 @@ class AgreementService:
                 amount_usd=converted.get('amount_usd'),
                 amount_ngn=converted.get('amount_ngn'),
                 description=description,
-                timeline=timeline,
+                timeline=timeline_str or None,
+                timeline_value=tv,
+                timeline_unit=tu,
                 status='pending'
             )
             message = ChatMessage.objects.create(
