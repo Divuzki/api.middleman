@@ -191,7 +191,6 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
         fcm_token = validated_data.pop('fcm_token', None)
         platform = validated_data.get('platform', 'android')
 
-        # Check if device exists
         device_profile, created = DeviceProfile.objects.update_or_create(
             device_uuid=device_uuid,
             defaults={
@@ -203,8 +202,8 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
         )
 
         if fcm_token:
-            # Handle FCM Device
-            # We use the fcm_token as registration_id
+            old_fcm = device_profile.fcm_device
+
             fcm_device, _ = FCMDevice.objects.update_or_create(
                 registration_id=fcm_token,
                 defaults={
@@ -216,5 +215,9 @@ class DeviceProfileSerializer(serializers.ModelSerializer):
             )
             device_profile.fcm_device = fcm_device
             device_profile.save()
+
+            # Remove stale FCMDevice so it no longer receives notifications
+            if old_fcm and old_fcm.pk != fcm_device.pk:
+                old_fcm.delete()
 
         return device_profile
