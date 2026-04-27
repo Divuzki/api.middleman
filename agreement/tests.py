@@ -70,6 +70,49 @@ class AgreementTests(TestCase):
         self.assertEqual(agreement.buyer, self.user)
         self.assertIsNone(agreement.seller)
 
+    def test_create_offer_timeline_optional(self):
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, buyer=self.user,
+            creator_role='buyer'
+        )
+        response = self.client.post(
+            f"/agreements/{agreement.id}/offers/",
+            {"amount": 5000, "description": "Deliver X"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payload = response.json()["data"]
+        self.assertEqual(payload["type"], "offer")
+        self.assertIsNotNone(payload.get("offer"))
+        self.assertTrue(payload["offer"].get("timeline") in ("", None, ""))
+
+    def test_create_offer_structured_timeline_months_capped(self):
+        agreement = Agreement.objects.create(
+            title="Test", description="Desc",
+            initiator=self.user, buyer=self.user,
+            creator_role='buyer'
+        )
+        # Over cap (7 months)
+        response = self.client.post(
+            f"/agreements/{agreement.id}/offers/",
+            {"amount": 5000, "description": "Deliver X", "timelineValue": 7, "timelineUnit": "months"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Valid (6 months)
+        response_ok = self.client.post(
+            f"/agreements/{agreement.id}/offers/",
+            {"amount": 5000, "description": "Deliver X", "timelineValue": 6, "timelineUnit": "months"},
+            format="json",
+        )
+        self.assertEqual(response_ok.status_code, status.HTTP_201_CREATED)
+        payload_ok = response_ok.json()["data"]
+        self.assertEqual(payload_ok["offer"]["timelineUnit"], "months")
+        self.assertEqual(payload_ok["offer"]["timelineValue"], 6)
+        self.assertEqual(payload_ok["offer"]["timeline"], "6 months")
+
     def test_create_agreement_seller_with_offer(self):
         data = {
             'title': 'Seller Agreement',
@@ -113,6 +156,7 @@ class AgreementTests(TestCase):
         # Another user as seller
         seller = User.objects.create_user(email='seller@test.com', password='pw', firebase_uid='uid_sell')
         agreement.seller = seller
+        agreement.counterparty = seller
         agreement.save()
         
         self.client.force_authenticate(user=seller)
@@ -139,6 +183,7 @@ class AgreementTests(TestCase):
         # Another user as buyer
         buyer = User.objects.create_user(email='buyer@test.com', password='pw', firebase_uid='uid_buy')
         agreement.buyer = buyer
+        agreement.counterparty = buyer
         agreement.save()
         
         buyer_wallet = Wallet.objects.get(user_id=buyer.id)
@@ -174,8 +219,9 @@ class AgreementTests(TestCase):
         self.assertEqual(agreement.active_offer, offer)
         
         # Verify wallet debit
-        self.assertEqual(float(buyer_wallet.balance), 400.00) # 500 - 100
-        self.assertTrue(Transaction.objects.filter(wallet=buyer_wallet, amount=100, transaction_type='AGREEMENT_PAYMENT').exists())
+        # Default fee_payer is 'split' => buyer pays 100 + 1.75 = 101.75
+        self.assertEqual(float(buyer_wallet.balance), 398.25)  # 500 - 101.75
+        self.assertTrue(Transaction.objects.filter(wallet=buyer_wallet, transaction_type='AGREEMENT_PAYMENT').exists())
 
     def test_complete_agreement(self):
         agreement = Agreement.objects.create(
@@ -224,8 +270,9 @@ class AgreementTests(TestCase):
         self.assertIsNotNone(agreement.completed_at)
         
         # Verify seller credit
-        self.assertEqual(float(seller_wallet.balance), 100.00)
-        self.assertTrue(Transaction.objects.filter(wallet=seller_wallet, amount=100, transaction_type='AGREEMENT_PAYOUT').exists())
+        # Default fee_payer is 'split' => seller receives 98.25 on 100.00 amount
+        self.assertEqual(float(seller_wallet.balance), 98.25)
+        self.assertTrue(Transaction.objects.filter(wallet=seller_wallet, transaction_type='AGREEMENT_PAYOUT').exists())
 
     def test_reject_offer(self):
         agreement = Agreement.objects.create(
@@ -410,7 +457,8 @@ class WebSocketTests(TestCase):
         
         # Verify Seller Wallet
         await database_sync_to_async(seller_wallet.refresh_from_db)()
-        self.assertEqual(float(seller_wallet.balance), 1000.0)
+        # Default fee_payer is 'split' => seller receives 982.50 on 1000.00 amount
+        self.assertEqual(float(seller_wallet.balance), 982.5)
         
         await communicator.disconnect()
 

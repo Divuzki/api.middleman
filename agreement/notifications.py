@@ -57,6 +57,18 @@ def send_agreement_notification(agreement, status=None):
     elif status == 'offer_rejected':
         title = "Offer Rejected"
         body = f"An offer was rejected for agreement: {agreement.title}"
+    elif status == 'expires_24h':
+        title = "Agreement expiring soon"
+        body = f"'{agreement.title}' expires in about 24 hours."
+    elif status == 'expires_1h':
+        title = "Agreement expiring in 1 hour"
+        body = f"'{agreement.title}' expires in 1 hour."
+    elif status == 'expired':
+        title = "Agreement expired"
+        body = f"'{agreement.title}' has expired. You have 1 hour to take action."
+    elif status == 'cancelled_expired':
+        title = "Agreement cancelled"
+        body = f"'{agreement.title}' was cancelled after the grace period."
     
     # Send to each participant
     for user in participants:

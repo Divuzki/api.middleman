@@ -483,15 +483,18 @@ class AgreementViewSet(viewsets.ModelViewSet):
         if not all([amount, description]):
             raise ValidationError("amount and description are required")
 
-        offer, message = AgreementService.create_offer(
-            request.user,
-            agreement,
-            amount,
-            description,
-            timeline=timeline,
-            timeline_value=timeline_value,
-            timeline_unit=timeline_unit,
-        )
+        try:
+            offer, message = AgreementService.create_offer(
+                request.user,
+                agreement,
+                amount,
+                description,
+                timeline=timeline,
+                timeline_value=timeline_value,
+                timeline_unit=timeline_unit,
+            )
+        except ValueError as e:
+            raise ValidationError(str(e))
 
         self._notify_offer_created(message)
         self._notify_agreement_update(agreement, last_message=f"Offer: {amount}")

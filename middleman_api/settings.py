@@ -486,3 +486,11 @@ CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_ACCEPT_CONTENT = ['json']
+
+# Celery Beat: periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    "process_agreement_expiries_every_minute": {
+        "task": "agreement.tasks.process_agreement_expiries",
+        "schedule": 60.0,
+    },
+}
