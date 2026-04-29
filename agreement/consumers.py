@@ -384,14 +384,16 @@ class AgreementConsumer(AsyncWebsocketConsumer):
                     priority="high"
                 )
                 
-                # iOS: Category for input
+                # iOS: Category for input + mutable-content so the
+                # NotificationService extension can attach the sender avatar.
                 apns_config = messaging.APNSConfig(
                     payload=messaging.APNSPayload(
                         aps=messaging.Aps(
                             alert=messaging.ApsAlert(title=title, body=body),
                             category="CHAT_MESSAGE",
                             thread_id=conversation_id,
-                            sound="default"
+                            sound="default",
+                            mutable_content=True,
                         )
                     )
                 )
