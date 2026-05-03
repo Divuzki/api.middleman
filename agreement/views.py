@@ -223,10 +223,11 @@ class AgreementViewSet(viewsets.ModelViewSet):
     def deliver_agreement(self, request, pk=None):
         agreement = self.get_object()
         proof = request.data.get("proof", [])
+        pin = request.data.get("pin")
 
         try:
             agreement, msg = AgreementService.deliver_agreement(
-                request.user, agreement, proof
+                request.user, agreement, proof, pin
             )
         except ValueError as e:
             if "Only seller" in str(e):
