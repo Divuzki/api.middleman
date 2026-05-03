@@ -12,10 +12,10 @@ Change vs original:
     'other' = counterparty pays all     (opposite of 'me')
     'split' = 50/50 (1.75% each side)
 
-── CONFIG ─────────────────────────────────────────────────────────────────────
+── CONFIG ───────────────────────────────────────────────────────────────────────────────
   Change ESCROW_FEE_RATE and PLATFORM_FEE_WALLET_USER_ID in settings.py.
   Everything else here is automatic.
-──────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────
 """
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover
     relativedelta = None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
 # ── CONFIG ─── Change these two values in settings.py, not here ──────────────
 #
 #   ESCROW_FEE_RATE  (Decimal string, default "0.035" = 3.5%)
@@ -54,7 +54,7 @@ except Exception:  # pragma: no cover
 #       If None, fees are just logged (they stay in the overall Paystack
 #       balance as natural profit).
 #
-# ─────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
 
 def _get_escrow_fee_rate() -> Decimal:
     raw = getattr(settings, 'ESCROW_FEE_RATE', '0.035')
@@ -136,7 +136,7 @@ def _credit_platform_fee(fee_amount: Decimal, description: str, source_ref: str)
         )
         return
 
-    # ── OPTION A: Internal Credit ───────────────────────────────────────────
+    # ── OPTION A: Internal Credit ─────────────────────────────────────────
     if platform_user_id:
         try:
             with transaction.atomic(using='wallet_db'):
@@ -175,7 +175,7 @@ def get_user_name(user):
 
 class AgreementService:
 
-    # ── join ──────────────────────────────────────────────────────────────────
+    # ── join ────────────────────────────────────────────────────────────────────────────────
     @staticmethod
     def join_agreement(user, agreement, return_msg=False):
         if agreement.initiator == user:
@@ -207,7 +207,7 @@ class AgreementService:
                 return agreement_locked, msg
             return agreement_locked
 
-    # ── accept_offer (buyer funds escrow) ─────────────────────────────────────
+    # ── accept_offer (buyer funds escrow) ─────────────────────────────────────────────────
     @staticmethod
     def accept_offer(user, agreement, offer, pin=None):
         """
@@ -447,7 +447,7 @@ class AgreementService:
 
         return agreement, msg
 
-    # ── remaining methods (unchanged) ─────────────────────────────────────────
+    # ── remaining methods (unchanged) ─────────────────────────────────────────────────
 
     @staticmethod
     def reject_offer(user, agreement, offer):
@@ -510,11 +510,17 @@ class AgreementService:
         return offer, message
 
     @staticmethod
-    def deliver_agreement(user, agreement, proof=None):
+    def deliver_agreement(user, agreement, proof=None, pin=None):
         if agreement.seller != user:
             raise ValueError("Only seller can deliver agreement")
         if agreement.status not in ['active', 'secured']:
             raise ValueError("Agreement must be active to mark as delivered")
+
+        if user.transaction_pin:
+            if not pin:
+                raise ValueError("PIN required to mark as delivered")
+            if not user.verify_pin(pin):
+                raise ValueError("Incorrect PIN")
 
         if proof:
             if not isinstance(proof, list):
