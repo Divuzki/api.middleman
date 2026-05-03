@@ -447,6 +447,85 @@ class AgreementService:
 
         return agreement, msg
 
+    # ── cancel_agreement ──────────────────────────────────────────────────────
+    @staticmethod
+    def cancel_agreement(user, agreement, reason=None):
+        """
+        Cancel an agreement and refund the buyer's escrow if funds were locked.
+
+        Cancellable statuses:
+          - awaiting_acceptance / terms_locked: no funds involved, free cancel
+          - active / delivered: buyer's full escrow debit is returned to their wallet
+
+        Any participant (initiator, counterparty, buyer, or seller) may cancel.
+        """
+        cancellable_statuses = ['awaiting_acceptance', 'terms_locked', 'active', 'delivered']
+
+        if agreement.status not in cancellable_statuses:
+            raise ValueError(f"Cannot cancel agreement in '{agreement.status}' status")
+
+        participants = [
+            agreement.initiator,
+            agreement.counterparty,
+            agreement.buyer,
+            agreement.seller,
+        ]
+        if user not in [p for p in participants if p is not None]:
+            raise ValueError("Not a participant")
+
+        funded_statuses = ['active', 'delivered']
+
+        if agreement.status in funded_statuses:
+            # Refund the buyer's wallet the exact amount that was debited
+            if not agreement.buyer_debited_amount or not agreement.buyer_debited_currency:
+                raise ValueError("Refund information not available; contact support to cancel.")
+
+            refund_amount = Decimal(str(agreement.buyer_debited_amount))
+            refund_currency = agreement.buyer_debited_currency
+
+            with transaction.atomic(using='wallet_db'):
+                try:
+                    buyer_wallet = Wallet.objects.select_for_update().get(
+                        user_id=agreement.buyer.id
+                    )
+                except Wallet.DoesNotExist:
+                    raise ValueError("Buyer wallet not found")
+
+                buyer_wallet.balance += refund_amount
+                buyer_wallet.save()
+
+                converted = get_converted_amounts(refund_amount, refund_currency)
+                Transaction.objects.create(
+                    wallet=buyer_wallet,
+                    title=f"Escrow Refund: {agreement.title}",
+                    amount=refund_amount,
+                    amount_usd=converted.get('amount_usd'),
+                    amount_ngn=converted.get('amount_ngn'),
+                    transaction_type='AGREEMENT_REFUND',
+                    category='Escrow Refund',
+                    status='SUCCESSFUL',
+                    reference=f"escrow_refund_{agreement.id}_{uuid.uuid4().hex[:8]}",
+                    description=f"Escrow refunded: agreement cancelled by {get_user_name(user)}",
+                    payment_currency=refund_currency,
+                )
+
+                transaction.on_commit(
+                    lambda: notify_balance_update(agreement.buyer), using='wallet_db'
+                )
+
+        agreement.status = 'cancelled'
+        agreement.cancelled_reason = reason or 'user_cancelled'
+        agreement.save()
+
+        msg = ChatMessage.objects.create(
+            agreement=agreement,
+            sender=user,
+            text=f"{get_user_name(user)} cancelled the agreement",
+            message_type='system',
+        )
+
+        return agreement, msg
+
     # ── remaining methods (unchanged) ─────────────────────────────────────────
 
     @staticmethod
