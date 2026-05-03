@@ -447,6 +447,33 @@ class AgreementViewSet(viewsets.ModelViewSet):
             data["disputeTicketId"] = ticket_id
         return StandardResponse(data)
 
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel_agreement(self, request, pk=None):
+        agreement = self.get_object()
+        reason = request.data.get("reason")
+
+        try:
+            agreement, msg = AgreementService.cancel_agreement(
+                request.user, agreement, reason
+            )
+        except ValueError as e:
+            raise ValidationError(str(e))
+        except Exception as e:
+            raise APIException(f"Cancellation failed: {str(e)}")
+
+        self._notify_agreement_update(agreement)
+        self._notify_chat_message(msg)
+
+        for participant in self._get_participants(agreement):
+            notify_badge_counts(participant)
+
+        if agreement.buyer:
+            notify_balance_update(agreement.buyer)
+
+        send_agreement_notification(agreement, status="cancelled")
+
+        return StandardResponse(self.get_serializer(agreement).data)
+
     @action(detail=True, methods=["get", "post"], url_path="messages")
     def messages(self, request, pk=None):
         agreement = self.get_object()
